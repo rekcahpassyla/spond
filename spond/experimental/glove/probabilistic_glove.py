@@ -1,4 +1,5 @@
 # probabilistic embeddings
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -8,6 +9,8 @@ import torch.nn.functional as F
 from torch.distributions.multivariate_normal import MultivariateNormal
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader, Dataset
+
+from spond.experimental.glove.glove_layer import GloveEmbeddingsDataset
 
 
 class ProbabilisticGloveLayer(nn.Embedding):
@@ -66,14 +69,21 @@ class ProbabilisticGloveLayer(nn.Embedding):
             torch.eye(1)
         )
         # TODO: Do these need to be embeddings?
+        # TODO: Do these need to be randomly initialised?
         # Deterministic means for the weights and bias, that will be learnt
         # means will be used to transform the samples from the above wi/bi
         # samples.
-        self.wi_mu = torch.zeros((num_embeddings, embedding_dim))
-        self.bi_mu = torch.zeros((num_embeddings, 1))
+        self.wi_mu = torch.tensor(
+            torch.zeros((num_embeddings, embedding_dim), requires_grad=True))
+        self.bi_mu = torch.tensor(
+            torch.zeros((num_embeddings, 1), requires_grad=True))
         # wi_sigma = log(1 + exp(wi_rho)) to enforce positivity.
-        self.wi_rho = torch.tensor((num_embeddings, embedding_dim))
-        self.bi_rho = torch.tensor((num_embeddings, 1))
+        self.wi_rho = torch.tensor(
+            np.random.random((num_embeddings, embedding_dim)),
+            requires_grad=True).float()
+        self.bi_rho = torch.tensor(
+            np.random.random((num_embeddings, 1)),
+            requires_grad=True).float()
         self.wi_sigma = torch.log(1 + torch.exp(self.wi_rho))
         self.bi_sigma = torch.log(1 + torch.exp(self.bi_rho))
 
@@ -113,9 +123,9 @@ class ProbabilisticGloveLayer(nn.Embedding):
 
     def _set_device(self, device):
         self.device = device
-        self.wi_dist = self.wi_dist.to(device)
-        self.bi_dist = self.bi_dist.to(device)
         # TODO: Add all the other variables
+        #self.wi_dist = self.wi_dist.to(device)
+        #self.bi_dist = self.bi_dist.to(device)
         if self.double:
             self.wj = self.wj.to(device)
             self.bj = self.bj.to(device)
@@ -132,7 +142,9 @@ class ProbabilisticGloveLayer(nn.Embedding):
         # we are taking one sample from each embedding distribution
         sample_shape = torch.Size([])
         wi_eps = self.wi_dist.sample(sample_shape)
-        # TODO: is this * (elementwise) or @ (matrix multiplication)?
+        # TODO: Only because we have assumed a diagonal covariance matrix,
+        # is the below elementwise multiplication (* rather than @).
+        # If it was not diagonal, we would have to do matrix multiplication
         wi = self.wi_mu + wi_eps * self.wi_sigma
         return wi
 
@@ -145,17 +157,19 @@ class ProbabilisticGloveLayer(nn.Embedding):
         # TODO: Refactor later.
         sample_shape = torch.Size([])
         wi_eps = self.wi_dist.sample(sample_shape)
-        # TODO: is this * (elementwise) or @ (matrix multiplication)?
+        # TODO: Only because we have assumed a diagonal covariance matrix,
+        # is the below elementwise multiplication (* rather than @).
+        # If it was not diagonal, we would have to do matrix multiplication
         wi = self.wi_mu + wi_eps * self.wi_sigma
         bi_eps = self.bi_dist.sample(sample_shape)
-        # TODO: is this * (elementwise) or @ (matrix multiplication)?
         bi = self.bi_mu + bi_eps * self.bi_sigma
         # TODO: the distributions are not callable and not indexable
         # For efficiency, we probably want to sample only once on each epoch
         # and index into the samples.
         # for now we are going to sample every time, knowing that it's wrong.
-        w_i = wi(i_indices)
-        b_i = bi(i_indices).squeeze()
+        # TODO: Not sure what to do with j_indices. Do we update the j_indices
+        w_i = wi[i_indices]
+        b_i = bi[i_indices].squeeze()
         if self.double:
             raise AssertionError("Not reachable")
             w_j = self.wj(j_indices)
@@ -229,14 +243,14 @@ class ProbabilisticGloveLayer(nn.Embedding):
         raise NotImplementedError('Not yet implemented')
 
 
-class GloveSimple(pl.LightningModule):
+class ProbabilisticGlove(pl.LightningModule):
 
     def __init__(self, train_embeddings_file, batch_size, train_cooccurrence_file,
                  limit=None):
         # train_embeddings_file: the filename contaning the pre-trained weights
         # train_cooccurrence_file: the filename containing the co-occurrence statistics
         # that we want to match these embeddings to.
-        super(GloveSimple, self).__init__()
+        super(ProbabilisticGlove, self).__init__()
         self.limit = limit
         self.train_data = torch.load(train_embeddings_file)
         self.train_cooccurrence = torch.load(train_cooccurrence_file)
@@ -258,7 +272,7 @@ class GloveSimple(pl.LightningModule):
             self.train_cooccurrence)
 
     def forward(self, indices):
-        return self.glove_layer(indices)
+        return self.glove_layer.weights(indices)
 
     def training_step(self, batch, batch_idx):
         # if this isn't done explicitly it somehow never gets set automatically
@@ -297,7 +311,7 @@ class GloveSimple(pl.LightningModule):
         # TODO: This is a torch optimiser. If we change to Pyro,
         # have to change to Pyro optimiser.
         # TODO: The learning rate probably needs to change,
-        # because we are now sampling and it's going to be very stochastic. 
+        # because we are now sampling and it's going to be very stochastic.
         opt = optim.Adam(self.parameters(), lr=0.005)
         return opt
 
@@ -306,41 +320,14 @@ class GloveSimple(pl.LightningModule):
         return DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
 
 
-class GloveEmbeddingsDataset(Dataset):
-    # Dataset for existing embedings
-
-    def __init__(self, data, limit=None):
-        # train_data contains wi.weight / wj.weight / bi.weight / bj.weight
-        # for stability, the target is the wi + wj
-        self.weights = data['wi.weight'] + data['wj.weight']
-        if limit:
-            self.weights = self.weights[:limit]
-        nemb, dim = self.weights.shape
-        # The dataset does not appear to need to be moved to GPU.
-        # Lightning takes care of that
-        self.x = torch.arange(nemb)
-        self.y = self.weights
-        self.N = nemb
-
-    def __len__(self):
-        return self.N
-
-    def __getitem__(self, idx):
-        if torch.is_tensor(idx):
-            idx = idx.tolist()
-        x = self.x[idx]
-        y = self.y[idx]
-        return x, y
-
-
 if __name__ == '__main__':
     # change to gpus=1 to use GPU. Otherwise CPU will be used
     trainer = pl.Trainer(gpus=0, max_epochs=100, progress_bar_refresh_rate=20)
     # Trainer must be created before model, because we need to detect
     # what we requested for GPU.
 
-    model = GloveSimple('glove_audio.pt', batch_size=100,
-                        train_cooccurrence_file='../audioset/co_occurrence_audio_all.pt')
+    model = ProbabilisticGlove('glove_audio.pt', batch_size=100,
+                               train_cooccurrence_file='../audioset/co_occurrence_audio_all.pt')
     trainer.fit(model)
 
 
