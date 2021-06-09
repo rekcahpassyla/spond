@@ -62,11 +62,11 @@ class ProbabilisticGloveLayer(nn.Embedding):
         # non diagonal covariance matrix
         self.wi_dist = MultivariateNormal(
             torch.zeros((num_embeddings, embedding_dim)),
-            torch.eye(embedding_dim) * 0.00001
+            torch.eye(embedding_dim)
         )
         self.bi_dist = MultivariateNormal(
             torch.zeros((num_embeddings, 1)),
-            torch.eye(1) * 0.00001
+            torch.eye(1) 
         )
         # Deterministic means for the weights and bias, that will be learnt
         # means will be used to transform the samples from the above wi/bi
