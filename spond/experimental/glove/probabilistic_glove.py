@@ -62,30 +62,30 @@ class ProbabilisticGloveLayer(nn.Embedding):
         # non diagonal covariance matrix
         self.wi_dist = MultivariateNormal(
             torch.zeros((num_embeddings, embedding_dim)),
-            torch.eye(embedding_dim)
+            torch.eye(embedding_dim) * 0.00001
         )
         self.bi_dist = MultivariateNormal(
             torch.zeros((num_embeddings, 1)),
-            torch.eye(1)
+            torch.eye(1) * 0.00001
         )
-        # TODO: Do these need to be embeddings?
-        # TODO: Do these need to be randomly initialised?
         # Deterministic means for the weights and bias, that will be learnt
         # means will be used to transform the samples from the above wi/bi
         # samples.
-        self.wi_mu = torch.tensor(
-            torch.zeros((num_embeddings, embedding_dim), requires_grad=True))
-        self.bi_mu = torch.tensor(
-            torch.zeros((num_embeddings, 1), requires_grad=True))
+        # Express them as embeddings because that sets up all the gradients
+        # for backprop, and allows for easy indexing.
+        self.wi_mu = nn.Embedding(num_embeddings, embedding_dim)
+        self.wi_mu.weight.data.uniform_(-1, 1)
+        self.bi_mu = nn.Embedding(num_embeddings, 1)
+        self.bi_mu.weight.data.zero_()
         # wi_sigma = log(1 + exp(wi_rho)) to enforce positivity.
-        self.wi_rho = torch.tensor(
-            np.random.random((num_embeddings, embedding_dim)),
-            requires_grad=True).float()
-        self.bi_rho = torch.tensor(
-            np.random.random((num_embeddings, 1)),
-            requires_grad=True).float()
-        self.wi_sigma = torch.log(1 + torch.exp(self.wi_rho))
-        self.bi_sigma = torch.log(1 + torch.exp(self.bi_rho))
+        self.wi_rho = nn.Embedding(num_embeddings, embedding_dim)
+        self.wi_rho.weight.data.uniform_(-1, 1)
+        self.bi_rho = nn.Embedding(num_embeddings, 1)
+        self.bi_rho.weight.data.zero_()
+        # using torch functions should ensure backprop is set up right
+        self.softplus = nn.Softplus()
+        #self.wi_sigma = softplus(self.wi_rho.weight) #torch.log(1 + torch.exp(self.wi_rho))
+        #self.bi_sigma = softplus(self.bi_rho.weight) #torch.log(1 + torch.exp(self.bi_rho))
 
         if self.double:
             raise AssertionError('Not reachable')
@@ -145,39 +145,56 @@ class ProbabilisticGloveLayer(nn.Embedding):
         # TODO: Only because we have assumed a diagonal covariance matrix,
         # is the below elementwise multiplication (* rather than @).
         # If it was not diagonal, we would have to do matrix multiplication
-        wi = self.wi_mu + wi_eps * self.wi_sigma
+        #wi = self.wi_mu + wi_eps * self.wi_sigma
+        wi = (
+            self.wi_mu.weight +
+            wi_eps * self.softplus(self.wi_rho.weight)
+        )
         return wi
 
     # implemented as such to be consistent with nn.Embeddings interface
     def forward(self, indices):
-        return self.weights[indices]
+        return self.weights(indices)
 
     def _update(self, i_indices, j_indices):
         # we need to do all the sampling here.
-        # TODO: Refactor later.
-        sample_shape = torch.Size([])
-        wi_eps = self.wi_dist.sample(sample_shape)
+        # TODO: Not sure what to do with j_indices. Do we update the j_indices
         # TODO: Only because we have assumed a diagonal covariance matrix,
         # is the below elementwise multiplication (* rather than @).
         # If it was not diagonal, we would have to do matrix multiplication
-        wi = self.wi_mu + wi_eps * self.wi_sigma
-        bi_eps = self.bi_dist.sample(sample_shape)
-        bi = self.bi_mu + bi_eps * self.bi_sigma
-        # TODO: the distributions are not callable and not indexable
-        # For efficiency, we probably want to sample only once on each epoch
-        # and index into the samples.
-        # for now we are going to sample every time, knowing that it's wrong.
-        # TODO: Not sure what to do with j_indices. Do we update the j_indices
-        w_i = wi[i_indices]
-        b_i = bi[i_indices].squeeze()
+        w_i = (
+            self.wi_mu(i_indices) +
+            self.wi_eps[i_indices] * self.softplus(self.wi_rho(i_indices))
+        )
+        w_j = (
+                self.wi_mu(j_indices) +
+                self.wi_eps[j_indices] * self.softplus(self.wi_rho(j_indices))
+        )
+        b_i = (
+            self.bi_mu(i_indices) +
+            self.bi_eps[i_indices] * self.softplus(self.bi_rho(i_indices)) #self.bi_sigma.weight
+        ).squeeze()
+        b_j = (
+            self.bi_mu(j_indices) +
+            self.bi_eps[j_indices] * self.softplus(self.bi_rho(j_indices)) #self.bi_sigma.weight
+        ).squeeze()
+
         if self.double:
             raise AssertionError("Not reachable")
             w_j = self.wj(j_indices)
             b_j = self.bj(j_indices).squeeze()
             x = torch.sum(w_i * w_j, dim=1) + b_i + b_j
         else:
-            x = torch.sum(w_i, dim=1) + b_i
+            #x = torch.sum(w_i, dim=1) + b_i
+            x = torch.sum(w_i * w_j, dim=1) + b_i + b_j
         return x
+
+    def _init_samples(self):
+        # On every 0th batch in an epoch, sample everything.
+        sample_shape = torch.Size([])
+        self.wi_eps = self.wi_dist.sample(sample_shape)
+        self.bi_eps = self.bi_dist.sample(sample_shape)
+
 
     def _loss_weights(self, x):
         # x: co_occurrence values
@@ -274,11 +291,21 @@ class ProbabilisticGlove(pl.LightningModule):
     def forward(self, indices):
         return self.glove_layer.weights(indices)
 
+    def ____backward(self, *args, **kwargs):
+        kwargs['retain_graph'] = True
+        return super(ProbabilisticGlove, self).backward(*args, **kwargs)
+
     def training_step(self, batch, batch_idx):
         # if this isn't done explicitly it somehow never gets set automatically
         # by lightning
         if self.glove_layer.device is None:
             self.glove_layer._set_device(self.device)
+        # If the batch_idx is 0, then we want to sample everything at once
+        # if we do multiple samples, end up with torch complaining we are
+        # trying to do backprop more than once.
+        if batch_idx == 0:
+            self.glove_layer._init_samples()
+
         # input: indices of embedding
         # targets: target embeddings
         indices, targets = batch
