@@ -3,8 +3,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+
 import torch.nn.functional as F
-from pyro.distributions import MultivariateNormal
+
+
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader, Dataset
 
@@ -12,6 +14,7 @@ from spond.experimental.glove.glove_layer import GloveEmbeddingsDataset
 
 
 class ProbabilisticGloveLayer(nn.Embedding):
+
     # TODO: Is there a way to express constraints on weights other than
     # the nn.Functional.gradient_clipping ?
     # ANSWER: Yes, if you use Pyro with constraints.
@@ -27,6 +30,8 @@ class ProbabilisticGloveLayer(nn.Embedding):
                  max_norm=None, norm_type=2,
                  sparse=False   # not supported- just here to keep interface
                  ):
+        # Internal import because we need to set seed first
+        from pyro.distributions import MultivariateNormal
         # Not calling Embedding constructor, as this module is
         # composed of Embeddings. However we have to set some attributes
         nn.Embedding.__init__(self, num_embeddings, embedding_dim,
@@ -359,8 +364,13 @@ class ProbabilisticGlove(pl.LightningModule):
 
 
 if __name__ == '__main__':
+    # internal import so we can set eed
+    import pyro
+    seed = 2
+    pyro.set_rng_seed(seed)
+
     # change to gpus=1 to use GPU. Otherwise CPU will be used
-    trainer = pl.Trainer(gpus=0, max_epochs=100, progress_bar_refresh_rate=20)
+    trainer = pl.Trainer(gpus=0, max_epochs=20, progress_bar_refresh_rate=20)
     # Trainer must be created before model, because we need to detect
     # what we requested for GPU.
 
