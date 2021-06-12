@@ -4,9 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-# for now stick with normal torch; we do not need Pyro
-# until or unless we start to do inference.
-from torch.distributions.multivariate_normal import MultivariateNormal
+from pyro.distributions import MultivariateNormal
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader, Dataset
 
@@ -60,13 +58,17 @@ class ProbabilisticGloveLayer(nn.Embedding):
         # and that all the embeddings are independent of each other.
         # We express it as MV normal because this allows us to use a
         # non diagonal covariance matrix
+        # try setting the variance low here instead
+
         self.wi_dist = MultivariateNormal(
             torch.zeros((num_embeddings, embedding_dim)),
-            torch.eye(embedding_dim)
+            # changing this to 1e-9 makes the embeddings converge to something
+            # else than the pretrained
+            torch.eye(embedding_dim) * 1e-9
         )
         self.bi_dist = MultivariateNormal(
             torch.zeros((num_embeddings, 1)),
-            torch.eye(1) 
+            torch.eye(1)
         )
         # Deterministic means for the weights and bias, that will be learnt
         # means will be used to transform the samples from the above wi/bi
@@ -79,7 +81,10 @@ class ProbabilisticGloveLayer(nn.Embedding):
         self.bi_mu.weight.data.zero_()
         # wi_sigma = log(1 + exp(wi_rho)) to enforce positivity.
         self.wi_rho = nn.Embedding(num_embeddings, embedding_dim)
-        self.wi_rho.weight.data.uniform_(-1, 1)
+        # initialise the rho so softplus results in small values
+        # 1e-9 - this appears to be about -20 so we have to re-center around -19?
+        # except it doesn't work- re-centering just makes the means nowhere near
+        self.wi_rho.weight.data.uniform_(-1, 1) #- 19
         self.bi_rho = nn.Embedding(num_embeddings, 1)
         self.bi_rho.weight.data.zero_()
         # using torch functions should ensure backprop is set up right
@@ -148,7 +153,12 @@ class ProbabilisticGloveLayer(nn.Embedding):
         #wi = self.wi_mu + wi_eps * self.wi_sigma
         wi = (
             self.wi_mu.weight +
-            wi_eps * self.softplus(self.wi_rho.weight)
+            # multiplying by 1e-9 below should have the same effect
+            # as changing the wi_eps variance to 1e-9, but it doesn't.
+            # multiplying here results in wi_mu converging very closely
+            # to the deterministic embeddings, but the wi_sigma variance remains
+            # the same as in the other case.
+            wi_eps * self.softplus(self.wi_rho.weight) #* 1e-9
         )
         return wi
 
@@ -172,11 +182,12 @@ class ProbabilisticGloveLayer(nn.Embedding):
         )
         b_i = (
             self.bi_mu(i_indices) +
-            self.bi_eps[i_indices] * self.softplus(self.bi_rho(i_indices)) #self.bi_sigma.weight
+
+            self.bi_eps[i_indices] * self.softplus(self.bi_rho(i_indices))
         ).squeeze()
         b_j = (
             self.bi_mu(j_indices) +
-            self.bi_eps[j_indices] * self.softplus(self.bi_rho(j_indices)) #self.bi_sigma.weight
+            self.bi_eps[j_indices] * self.softplus(self.bi_rho(j_indices))
         ).squeeze()
 
         if self.double:
@@ -192,8 +203,8 @@ class ProbabilisticGloveLayer(nn.Embedding):
     def _init_samples(self):
         # On every 0th batch in an epoch, sample everything.
         sample_shape = torch.Size([])
-        self.wi_eps = self.wi_dist.sample(sample_shape)
-        self.bi_eps = self.bi_dist.sample(sample_shape)
+        self.wi_eps = self.wi_dist.sample(sample_shape) #* 1e-9
+        self.bi_eps = self.bi_dist.sample(sample_shape) #* 1e-9
 
 
     def _loss_weights(self, x):
