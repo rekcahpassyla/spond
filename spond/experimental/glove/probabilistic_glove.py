@@ -13,6 +13,9 @@ from torch.utils.data import DataLoader, Dataset
 from spond.experimental.glove.glove_layer import GloveEmbeddingsDataset
 
 
+DEVICE = 'cpu'
+
+
 class ProbabilisticGloveLayer(nn.Embedding):
 
     # TODO: Is there a way to express constraints on weights other than
@@ -21,6 +24,7 @@ class ProbabilisticGloveLayer(nn.Embedding):
     def __init__(self, num_embeddings, embedding_dim, co_occurrence,
                  # glove learning options
                  x_max=100, alpha=0.75,
+                 seed=None, # if None means don't set
                  # whether or not to use the wi and wj
                  # if set to False, will use only wi
                  double=False,
@@ -30,6 +34,11 @@ class ProbabilisticGloveLayer(nn.Embedding):
                  max_norm=None, norm_type=2,
                  sparse=False   # not supported- just here to keep interface
                  ):
+        self.seed = seed
+        if seed is not None:
+            # internal import to allow setting seed before any other imports
+            import pyro
+            pyro.set_rng_seed(seed)
         # Internal import because we need to set seed first
         from pyro.distributions import MultivariateNormal
         # Not calling Embedding constructor, as this module is
@@ -279,12 +288,16 @@ class ProbabilisticGloveLayer(nn.Embedding):
 class ProbabilisticGlove(pl.LightningModule):
 
     def __init__(self, train_embeddings_file, batch_size, train_cooccurrence_file,
+                 seed=None,
                  limit=None):
         # train_embeddings_file: the filename contaning the pre-trained weights
         # train_cooccurrence_file: the filename containing the co-occurrence statistics
         # that we want to match these embeddings to.
         super(ProbabilisticGlove, self).__init__()
+        self.seed = seed
         self.limit = limit
+        self.train_embeddings_file = train_embeddings_file
+        self.train_cooccurrence_file = train_cooccurrence_file
         self.train_data = torch.load(train_embeddings_file)
         self.train_cooccurrence = torch.load(train_cooccurrence_file)
         self.batch_size = batch_size
@@ -302,14 +315,47 @@ class ProbabilisticGlove(pl.LightningModule):
         # doesn't happen and the optimiser will blow up.
         self.glove_layer = ProbabilisticGloveLayer(
             self.num_embeddings, self.embedding_dim,
-            self.train_cooccurrence)
+            self.train_cooccurrence, seed=self.seed)
+
+    def additional_state(self):
+        # return dictionary of things that were passed to constructor
+        # should contain everything necessary to replicate a model.
+        # we don't save things like the actual training data and so on
+        # obviously this means that when the model is loaded,
+        # the appropriate training file must be present.
+        state = dict(
+            seed=self.seed,
+            limit=self.limit,
+            train_embeddings_file=self.train_embeddings_file,
+            train_cooccurrence_file=self.train_cooccurrence_file,
+            batch_size=self.batch_size,
+        )
+        return state
+
+    def save(self, filename):
+        # this is the torch model stuff
+        state = self.state_dict()
+        # this is the custom state like embeddings file name, etc
+        state.update(self.additional_state())
+        torch.save(state, f"{filename}")
+
+    @classmethod
+    def load(cls, filename):
+        state = torch.load(filename, map_location=DEVICE)
+        # get the items that would have been passed to the constructor
+        additional_state = {}
+        items = (
+            'seed', 'limit', 'train_embeddings_file',
+            'train_cooccurrence_file', 'batch_size'
+        )
+        for item in items:
+            additional_state[item] = state.pop(item)
+        instance = cls(**additional_state)
+        instance.load_state_dict(state)
+        return instance
 
     def forward(self, indices):
         return self.glove_layer.weights(indices)
-
-    def ____backward(self, *args, **kwargs):
-        kwargs['retain_graph'] = True
-        return super(ProbabilisticGlove, self).backward(*args, **kwargs)
 
     def training_step(self, batch, batch_idx):
         # if this isn't done explicitly it somehow never gets set automatically
@@ -365,9 +411,7 @@ class ProbabilisticGlove(pl.LightningModule):
 
 if __name__ == '__main__':
     # internal import so we can set eed
-    import pyro
     seed = 2
-    pyro.set_rng_seed(seed)
 
     # change to gpus=1 to use GPU. Otherwise CPU will be used
     trainer = pl.Trainer(gpus=0, max_epochs=20, progress_bar_refresh_rate=20)
@@ -375,7 +419,11 @@ if __name__ == '__main__':
     # what we requested for GPU.
 
     model = ProbabilisticGlove('glove_audio.pt', batch_size=100,
+                               seed=seed,
                                train_cooccurrence_file='../audioset/co_occurrence_audio_all.pt')
     trainer.fit(model)
+    model.save('/tmp/test.pt')
+    roundtrip = ProbabilisticGlove.load('/tmp/test.pt')
+    #trainer.fit(roundtrip)
 
 
