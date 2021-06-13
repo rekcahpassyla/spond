@@ -1,4 +1,7 @@
 # probabilistic embeddings
+import itertools
+import pandas as pd
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -78,7 +81,7 @@ class ProbabilisticGloveLayer(nn.Embedding):
             torch.zeros((num_embeddings, embedding_dim)),
             # changing this to 1e-9 makes the embeddings converge to something
             # else than the pretrained
-            torch.eye(embedding_dim) * 1e-9
+            torch.eye(embedding_dim)# * 1e-9
         )
         self.bi_dist = MultivariateNormal(
             torch.zeros((num_embeddings, 1)),
@@ -409,21 +412,98 @@ class ProbabilisticGlove(pl.LightningModule):
         return DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
 
 
+class Similarity:
+    # this class will take a root directory and a class and a list of ints (the seeds)
+    # and it will load the models contained in that directory
+    # and calculate the similarity matrices required.
+    # The convention is that the models will be stored in a directory/file structure
+    # as follows:
+    # dirname/classname/classname_seed.pt
+    # for example
+    # dirname/ProbabilisticGlove/ProbabilisticGlove_2.pt
+    # is the ProbabilisticGlove model run with seed set to 2.
+    def __init__(self, dirname, clsobj, seedvalues):
+        self.dirname = dirname
+        self.clsobj = clsobj
+        self.seedvalues = seedvalues
+        self.models = {}
+
+    def _load(self, seed):
+        # load the model with the corresponding seed.
+        # don't load all at once as this can lead to out of memory
+        clsname = self.clsobj.__name__
+        filename = os.path.join(dirname, clsname, f'{clsname}_{seed}.pt')
+        model = self.clsobj.load(filename)
+        return model
+
+    def means(self, kernel, outfile):
+        # kernel: callable that takes 2 arrays and returns pairwise matrix
+        # This function will compute the pairwise matrix for each pair of seeds
+        store = pd.HDFStore(outfile)
+        for i, seed1 in enumerate(self.seedvalues):
+            for seed2 in self.seedvalues[i+1:]:
+                model1 = self._load(seed1)
+                model2 = self._load(seed2)
+                thisvalue = kernel(
+                    model1.glove_layer.wi_mu.weight.detach().numpy(),
+                    model2.glove_layer.wi_mu.weight.detach().numpy()
+                )
+                store[f"{seed1}x{seed2}"] = pd.DataFrame(thisvalue)
+        store.close()
+
+    def variances(self, kernel, outfile, nsamples=100):
+        # kernel: callable that takes 2 arrays and returns pairwise matrix
+        # This function will sample nsamples occurrences of the weights
+        # for each of 2 models, and calculate nsamples of the similarity matrix
+        # then take the mean.
+        store = pd.HDFStore(outfile)
+        # internal import so we set the seed - does this work after other pyro imports?
+        import pyro
+        pyro.set_rng_seed(1)
+        for i, seed1 in enumerate(self.seedvalues):
+            for seed2 in self.seedvalues[i+1:]:
+                model1 = self._load(seed1)
+                model2 = self._load(seed2)
+                total = None
+                for i in range(nsamples):
+                    thisvalue = kernel(
+                        model1.glove_layer.weights.detach().numpy()[:100],
+                        model2.glove_layer.weights.detach().numpy()[:100]
+                    )
+                    if total is None:
+                        total = thisvalue
+                    else:
+                        total *= i-1
+                        total += thisvalue
+                        total /= i
+                store[f"{seed1}x{seed2}"] = pd.DataFrame(total)
+        store.close()
+
 if __name__ == '__main__':
-    # internal import so we can set eed
-    seed = 2
+    import os
+    import kernels
+    dirname = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
+    sim = Similarity(dirname, ProbabilisticGlove, seedvalues=(1, 2, 3, 4, 5))
+    #sim.means(kernels.dot, os.path.join(dirname, 'means_dot.hdf5'))
+    sim.variances(kernels.dot, os.path.join(dirname, 'mean_samples_dot.hdf5'))
+    if False:
+        seed = 1
 
-    # change to gpus=1 to use GPU. Otherwise CPU will be used
-    trainer = pl.Trainer(gpus=0, max_epochs=20, progress_bar_refresh_rate=20)
-    # Trainer must be created before model, because we need to detect
-    # what we requested for GPU.
+        # change to gpus=1 to use GPU. Otherwise CPU will be used
+        trainer = pl.Trainer(gpus=0, max_epochs=100, progress_bar_refresh_rate=20)
+        # Trainer must be created before model, because we need to detect
+        # what we requested for GPU.
 
-    model = ProbabilisticGlove('glove_audio.pt', batch_size=100,
-                               seed=seed,
-                               train_cooccurrence_file='../audioset/co_occurrence_audio_all.pt')
-    trainer.fit(model)
-    model.save('/tmp/test.pt')
-    roundtrip = ProbabilisticGlove.load('/tmp/test.pt')
-    #trainer.fit(roundtrip)
+        model = ProbabilisticGlove('glove_audio.pt', batch_size=100,
+                                   seed=seed,
+                                   train_cooccurrence_file='../audioset/co_occurrence_audio_all.pt')
+        trainer.fit(model)
+        outdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
+        clsname = model.__class__.__name__
+        outfile = os.path.join(outdir, clsname, f'{clsname}_{seed}.pt')
+        model.save(outfile)
+
+        #roundtrip = ProbabilisticGlove.load('/tmp/test.pt')
+
 
 
