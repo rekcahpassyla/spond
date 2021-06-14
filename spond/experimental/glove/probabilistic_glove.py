@@ -16,9 +16,6 @@ from torch.utils.data import DataLoader, Dataset
 from spond.experimental.glove.glove_layer import GloveEmbeddingsDataset
 
 
-DEVICE = 'cpu'
-
-
 class ProbabilisticGloveLayer(nn.Embedding):
 
     # TODO: Is there a way to express constraints on weights other than
@@ -63,10 +60,8 @@ class ProbabilisticGloveLayer(nn.Embedding):
             kws['padding_idx'] = padding_idx
         if scale_grad_by_freq is not None:
             kws['scale_grad_by_freq'] = scale_grad_by_freq
-        # TODO: Not yet figured out how the sampling will work with the
-        # double embedding.
+        # double is not supported, but we keep the same API.
         assert not double, "Probabilistic embedding can only be used in single mode"
-        self.double = double
         #self.wi = nn.Embedding(num_embeddings, embedding_dim, **kws)
         #self.bi = nn.Embedding(num_embeddings, 1)
         #self.wi.weight.data.uniform_(-1, 1)
@@ -109,14 +104,6 @@ class ProbabilisticGloveLayer(nn.Embedding):
         #self.wi_sigma = softplus(self.wi_rho.weight) #torch.log(1 + torch.exp(self.wi_rho))
         #self.bi_sigma = softplus(self.bi_rho.weight) #torch.log(1 + torch.exp(self.bi_rho))
 
-        if self.double:
-            raise AssertionError('Not reachable')
-            self.wj = nn.Embedding(num_embeddings, embedding_dim, **kws)
-            self.bj = nn.Embedding(num_embeddings, 1)
-
-            self.bj.weight.data.zero_()
-            self.wj.weight.data.uniform_(-1, 1)
-
         self.co_occurrence = co_occurrence.coalesce()
         # it is not very big
         self.coo_dense = self.co_occurrence.to_dense()
@@ -145,22 +132,16 @@ class ProbabilisticGloveLayer(nn.Embedding):
 
     def _set_device(self, device):
         self.device = device
-        # TODO: Add all the other variables
-        #self.wi_dist = self.wi_dist.to(device)
-        #self.bi_dist = self.bi_dist.to(device)
-        if self.double:
-            self.wj = self.wj.to(device)
-            self.bj = self.bj.to(device)
+        self.wi_mu.to(device)
+        self.bi_mu.to(device)
+        self.wi_rho.to(device)
+        self.bi_rho.to(device)
         self.co_occurrence = self.co_occurrence.to(device)
         self.coo_dense = self.coo_dense.to(device)
         self.allpairs = self.allpairs.to(device)
 
     @property
     def weights(self):
-        if self.double:
-            raise AssertionError('Not reachable')
-            return self.wi.weight + self.wj.weight
-        #return self.wi.weight
         # we are taking one sample from each embedding distribution
         sample_shape = torch.Size([])
         wi_eps = self.wi_dist.sample(sample_shape)
@@ -341,8 +322,8 @@ class ProbabilisticGlove(pl.LightningModule):
         torch.save(state, f"{filename}")
 
     @classmethod
-    def load(cls, filename):
-        state = torch.load(filename, map_location=DEVICE)
+    def load(cls, filename, device='cpu'):
+        state = torch.load(filename, map_location=device)
         # get the items that would have been passed to the constructor
         additional_state = {}
         items = (
