@@ -193,28 +193,26 @@ class ProbabilisticGloveLayer(nn.Embedding):
             self.wi_mu(i_indices) +
             self.wi_eps[i_indices] * self.softplus(self.wi_rho(i_indices))
         )
-        w_j = (
-                self.wi_mu(j_indices) +
-                self.wi_eps[j_indices] * self.softplus(self.wi_rho(j_indices))
-        )
+
         b_i = (
             self.bi_mu(i_indices) +
 
             self.bi_eps[i_indices] * self.softplus(self.bi_rho(i_indices))
         ).squeeze()
+        # If the double updating is not done, it takes a long time to converge.
+        w_j = (
+                self.wi_mu(j_indices) +
+                self.wi_eps[j_indices] * self.softplus(self.wi_rho(j_indices))
+        )
         b_j = (
-            self.bi_mu(j_indices) +
-            self.bi_eps[j_indices] * self.softplus(self.bi_rho(j_indices))
+                self.bi_mu(j_indices) +
+                self.bi_eps[j_indices] * self.softplus(self.bi_rho(j_indices))
         ).squeeze()
 
-        if self.double:
-            raise AssertionError("Not reachable")
-            w_j = self.wj(j_indices)
-            b_j = self.bj(j_indices).squeeze()
-            x = torch.sum(w_i * w_j, dim=1) + b_i + b_j
-        else:
-            #x = torch.sum(w_i, dim=1) + b_i
-            x = torch.sum(w_i * w_j, dim=1) + b_i + b_j
+        x = torch.sum(w_i * w_j, dim=1) + b_i + b_j
+        #else:
+        #    x = torch.sum(w_i, dim=1) + b_i
+        #    #x = torch.sum(w_i * w_j, dim=1) + b_i + b_j
         return x
 
     def _init_samples(self):
@@ -482,10 +480,11 @@ class Similarity:
 if __name__ == '__main__':
     import os
     import kernels
-    dirname = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
-    sim = Similarity(dirname, ProbabilisticGlove, seedvalues=(1, 2, 3, 4, 5))
-    #sim.means(kernels.dot, os.path.join(dirname, 'means_dot.hdf5'))
-    sim.variances(kernels.dot, os.path.join(dirname, 'mean_samples_dot.hdf5'))
+    if True:
+        dirname = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
+        sim = Similarity(dirname, ProbabilisticGlove, seedvalues=(1, 2, 3, 4, 5))
+        sim.means(kernels.exponential, os.path.join(dirname, 'means_exponential.hdf5'))
+        #sim.variances(kernels.dot, os.path.join(dirname, 'mean_samples_dot.hdf5'))
     if False:
         seed = 1
 
