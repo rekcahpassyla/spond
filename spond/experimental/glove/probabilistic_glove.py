@@ -13,6 +13,9 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader, Dataset
 
+import sys
+sys.path.append('/home/petra/spond')
+
 from spond.experimental.glove.glove_layer import GloveEmbeddingsDataset
 
 
@@ -132,10 +135,11 @@ class ProbabilisticGloveLayer(nn.Embedding):
 
     def _set_device(self, device):
         self.device = device
-        self.wi_mu.to(device)
-        self.bi_mu.to(device)
-        self.wi_rho.to(device)
-        self.bi_rho.to(device)
+        self.softplus = self.softplus.to(device)
+        self.wi_mu = self.wi_mu.to(device)
+        self.bi_mu = self.bi_mu.to(device)
+        self.wi_rho = self.wi_rho.to(device)
+        self.bi_rho = self.bi_rho.to(device)
         self.co_occurrence = self.co_occurrence.to(device)
         self.coo_dense = self.coo_dense.to(device)
         self.allpairs = self.allpairs.to(device)
@@ -144,7 +148,7 @@ class ProbabilisticGloveLayer(nn.Embedding):
     def weights(self):
         # we are taking one sample from each embedding distribution
         sample_shape = torch.Size([])
-        wi_eps = self.wi_dist.sample(sample_shape)
+        wi_eps = self.wi_dist.sample(sample_shape).to(self.device)
         # TODO: Only because we have assumed a diagonal covariance matrix,
         # is the below elementwise multiplication (* rather than @).
         # If it was not diagonal, we would have to do matrix multiplication
@@ -201,7 +205,9 @@ class ProbabilisticGloveLayer(nn.Embedding):
         sample_shape = torch.Size([])
         self.wi_eps = self.wi_dist.sample(sample_shape) #* 1e-9
         self.bi_eps = self.bi_dist.sample(sample_shape) #* 1e-9
-
+        self.wi_eps = self.wi_eps.to(self.device)
+        self.bi_eps = self.bi_eps.to(self.device)
+        
 
     def _loss_weights(self, x):
         # x: co_occurrence values
@@ -461,22 +467,22 @@ class Similarity:
 if __name__ == '__main__':
     import os
     import kernels
-    if True:
+    if False:
         dirname = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
         sim = Similarity(dirname, ProbabilisticGlove, seedvalues=(1, 2, 3, 4, 5))
         sim.means(kernels.exponential, os.path.join(dirname, 'means_exponential.hdf5'))
         #sim.variances(kernels.dot, os.path.join(dirname, 'mean_samples_dot.hdf5'))
-    if False:
+    if True:
         seed = 1
 
         # change to gpus=1 to use GPU. Otherwise CPU will be used
-        trainer = pl.Trainer(gpus=0, max_epochs=100, progress_bar_refresh_rate=20)
+        trainer = pl.Trainer(gpus=1, max_epochs=100, progress_bar_refresh_rate=20)
         # Trainer must be created before model, because we need to detect
         # what we requested for GPU.
 
-        model = ProbabilisticGlove('glove_audio.pt', batch_size=100,
+        model = ProbabilisticGlove('/home/petra/data/audioset/glove_audio.pt', batch_size=100,
                                    seed=seed,
-                                   train_cooccurrence_file='../audioset/co_occurrence_audio_all.pt')
+                                   train_cooccurrence_file='/home/petra/data/audioset/co_occurrence_audio_all.pt')
         trainer.fit(model)
         outdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
         clsname = model.__class__.__name__
