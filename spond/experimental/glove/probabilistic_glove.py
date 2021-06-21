@@ -13,8 +13,11 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader, Dataset
 
-import sys
-sys.path.append('/home/petra/spond')
+import socket
+if socket.gethostname().endswith('pals.ucl.ac.uk'):
+
+    import sys
+    sys.path.append('/home/petra/spond')
 
 from spond.experimental.glove.glove_layer import GloveEmbeddingsDataset
 
@@ -65,10 +68,6 @@ class ProbabilisticGloveLayer(nn.Embedding):
             kws['scale_grad_by_freq'] = scale_grad_by_freq
         # double is not supported, but we keep the same API.
         assert not double, "Probabilistic embedding can only be used in single mode"
-        #self.wi = nn.Embedding(num_embeddings, embedding_dim, **kws)
-        #self.bi = nn.Embedding(num_embeddings, 1)
-        #self.wi.weight.data.uniform_(-1, 1)
-        #self.bi.weight.data.zero_()
         # This assumes each dimension is independent of the others,
         # and that all the embeddings are independent of each other.
         # We express it as MV normal because this allows us to use a
@@ -144,10 +143,12 @@ class ProbabilisticGloveLayer(nn.Embedding):
         self.coo_dense = self.coo_dense.to(device)
         self.allpairs = self.allpairs.to(device)
 
-    @property
-    def weights(self):
+    def weights(self, n=1):
         # we are taking one sample from each embedding distribution
-        sample_shape = torch.Size([])
+        if n == 1:
+            sample_shape = torch.Size([])
+        else:
+            sample_shape = torch.Size([n])
         wi_eps = self.wi_dist.sample(sample_shape).to(self.device)
         # TODO: Only because we have assumed a diagonal covariance matrix,
         # is the below elementwise multiplication (* rather than @).
@@ -166,7 +167,7 @@ class ProbabilisticGloveLayer(nn.Embedding):
 
     # implemented as such to be consistent with nn.Embeddings interface
     def forward(self, indices):
-        return self.weights(indices)
+        return self.weights()(indices)
 
     def _update(self, i_indices, j_indices):
         # we need to do all the sampling here.
@@ -207,7 +208,7 @@ class ProbabilisticGloveLayer(nn.Embedding):
         self.bi_eps = self.bi_dist.sample(sample_shape) #* 1e-9
         self.wi_eps = self.wi_eps.to(self.device)
         self.bi_eps = self.bi_eps.to(self.device)
-        
+
 
     def _loss_weights(self, x):
         # x: co_occurrence values
@@ -265,6 +266,20 @@ class ProbabilisticGloveLayer(nn.Embedding):
         loss = torch.mean(loss)
         self.losses = [loss]
         return self.losses
+
+    def entropy(self):
+        # Calculate entropy based on the learnt rho (which must be transformed
+        # to a variance using softplus)
+        # entropy of a MV Gaussian =
+        # 0.5 * N * ln (2 * pi * e) + 0.5 * ln (det C)
+        N = self.embedding_dim
+        C = self.softplus(self.wi_rho.weight)
+        # diagonal covariance so just multiply all the items to get determinant
+        # convert to log space so we can add across the dimensions
+        # We don't need to convert back to exp because we need log det C anyway
+        logdetC = torch.log(C).sum(axis=1)
+        entropy = 0.5*(N*np.log(2*np.pi * np.e) + logdetC)
+        return entropy
 
     @classmethod
     def from_pretrained(cls, *args, **kwargs):
@@ -343,7 +358,7 @@ class ProbabilisticGlove(pl.LightningModule):
         return instance
 
     def forward(self, indices):
-        return self.glove_layer.weights(indices)
+        return self.glove_layer.weights()(indices)
 
     def training_step(self, batch, batch_idx):
         # if this isn't done explicitly it somehow never gets set automatically
@@ -365,7 +380,7 @@ class ProbabilisticGlove(pl.LightningModule):
         # Subclass of nn.Embedding
         # but internally, we should give the option to use
         # a co-occurrence matrix
-        out = self.glove_layer.weights[indices]
+        out = self.glove_layer.weights()[indices]
         loss = F.mse_loss(out, targets)
         glove_layer_loss = self.glove_layer.loss(indices)
         loss += glove_layer_loss[0]
@@ -421,22 +436,29 @@ class Similarity:
         model = self.clsobj.load(filename)
         return model
 
-    def means(self, kernel, outfile):
-        # kernel: callable that takes 2 arrays and returns pairwise matrix
-        # This function will compute the pairwise matrix for each pair of seeds
-        store = pd.HDFStore(outfile)
-        for i, seed1 in enumerate(self.seedvalues):
-            for seed2 in self.seedvalues[i+1:]:
-                model1 = self._load(seed1)
-                model2 = self._load(seed2)
-                thisvalue = kernel(
-                    model1.glove_layer.wi_mu.weight.detach().numpy(),
-                    model2.glove_layer.wi_mu.weight.detach().numpy()
-                )
-                store[f"{seed1}x{seed2}"] = pd.DataFrame(thisvalue)
+    def means(self, kernel, outfile, mode='a', mask=None):
+        # kernel: callable that takes 2 arrays and returns similarity matrix
+        # outfile: target file name
+        # mask: if passed, should be a sequence of integers for which the
+        # similarity will be calculated. It is up to the user to keep track
+        # of what the final output indices mean.
+        # Similarity will be calculated for each seed and stored in `outfile`
+        store = pd.HDFStore(outfile, mode=mode)
+        for seed in self.seedvalues:
+            model = self._load(seed)
+            values = model.glove_layer.wi_mu.weight.detach().numpy()
+            if mask is not None:
+                values = values[mask]
+            thisvalue = kernel(values, values)
+            store[str(seed)] = pd.DataFrame(thisvalue)
         store.close()
 
-    def variances(self, kernel, outfile, nsamples=100):
+    def variances(self):
+        # Load all the models, and calculate entropy
+
+        # kernel: callable that takes 2 arrays and returns similarity matrix
+        # Similarity will be calculated for each seed and stored in `outfile`
+
         # kernel: callable that takes 2 arrays and returns pairwise matrix
         # This function will sample nsamples occurrences of the weights
         # for each of 2 models, and calculate nsamples of the similarity matrix
@@ -452,8 +474,8 @@ class Similarity:
                 total = None
                 for i in range(nsamples):
                     thisvalue = kernel(
-                        model1.glove_layer.weights.detach().numpy()[:100],
-                        model2.glove_layer.weights.detach().numpy()[:100]
+                        model1.glove_layer.weights().detach().numpy()[:100],
+                        model2.glove_layer.weights().detach().numpy()[:100]
                     )
                     if total is None:
                         total = thisvalue
@@ -468,21 +490,40 @@ if __name__ == '__main__':
     import os
     import kernels
     if False:
+        rdir = 'results/ProbabilisticGlove'
+        model = ProbabilisticGlove.load(os.path.join(rdir, 'ProbabilisticGlove_1.pt'))
+        samples = model.glove_layer.weights(n=5)
+    if True:
+        import sys
+        ppath = '/opt/github.com/spond/spond/experimental'
+        sys.path.append(ppath)
+
+        from openimage.readfile import readlabels
+
+        labelsfn = "/opt/github.com/spond/spond/experimental/audioset/all_labels.csv"
+
+        labels, names = readlabels(labelsfn, rootdir=None)
+
+        # now we need to find the indexes of the audio labels in the all-labels file
+        audio_labels = pd.read_csv("/opt/github.com/spond/spond/experimental/audioset/class_labels_indices.csv",
+                                   index_col=0)
+        keep = np.array([labels[label] for label in audio_labels['mid'].values])
+
         dirname = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
         sim = Similarity(dirname, ProbabilisticGlove, seedvalues=(1, 2, 3, 4, 5))
-        sim.means(kernels.exponential, os.path.join(dirname, 'means_exponential.hdf5'))
-        #sim.variances(kernels.dot, os.path.join(dirname, 'mean_samples_dot.hdf5'))
-    if True:
+        #sim.means(kernels.exponential, os.path.join(dirname, 'means_exponential.hdf5'))
+        sim.means(kernels.dot, os.path.join(dirname, 'means_dot.hdf5'), mask=keep, mode='w')
+    if False:
         seed = 1
 
         # change to gpus=1 to use GPU. Otherwise CPU will be used
-        trainer = pl.Trainer(gpus=1, max_epochs=100, progress_bar_refresh_rate=20)
+        trainer = pl.Trainer(gpus=0, max_epochs=100, progress_bar_refresh_rate=20)
         # Trainer must be created before model, because we need to detect
         # what we requested for GPU.
 
-        model = ProbabilisticGlove('/home/petra/data/audioset/glove_audio.pt', batch_size=100,
+        model = ProbabilisticGlove('glove_audio.pt', batch_size=100,
                                    seed=seed,
-                                   train_cooccurrence_file='/home/petra/data/audioset/co_occurrence_audio_all.pt')
+                                   train_cooccurrence_file='../audioset/co_occurrence_audio_all.pt')
         trainer.fit(model)
         outdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
         clsname = model.__class__.__name__
