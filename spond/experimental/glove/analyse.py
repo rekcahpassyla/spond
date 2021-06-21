@@ -14,7 +14,7 @@ if socket.gethostname().endswith('pals.ucl.ac.uk'):
     tag = 'openimages'
     gpu = True
     labelsfn = os.path.join(datapath, tag, 'oidv6-class-descriptions.csv')
-    resultspath = ''
+    resultspath = 'results'
 else:
     ppath = '/opt/github.com/spond/spond/experimental'
     datapath = ppath
@@ -38,11 +38,15 @@ seeds = (1, 2, 3, 4, 5)
 
 N = 200
 
-if tag == audio:
-
+if tag == 'audioset':
     # now we need to find the indexes of the audio labels in the all-labels file
-    audio_labels = pd.read_csv("/opt/github.com/spond/spond/experimental/audioset/class_labels_indices.csv",
-                               index_col=0)
+    included_labels = pd.read_csv("/opt/github.com/spond/spond/experimental/audioset/class_labels_indices.csv",
+                                  index_col=0)
+else:
+    included_labels = pd.DataFrame({
+        'mid': pd.Series(index_to_label),
+        'display_name': pd.Series(index_to_name)
+    })
 
 corrs = {}
 
@@ -74,9 +78,9 @@ for i, seed1 in enumerate(seeds):
 
 s.close()
 
-keep = np.array([labels[label] for label in audio_labels['mid'].values])
+keep = np.array([labels[label] for label in included_labels['mid'].values])
 
-rdir = 'results/ProbabilisticGlove'
+rdir = f'results/{tag}/ProbabilisticGlove'
 from probabilistic_glove import ProbabilisticGlove
 import os
 
@@ -85,7 +89,7 @@ entropies = {}
 
 for seed in seeds:
 
-    model = ProbabilisticGlove.load(os.path.join(rdir, f'ProbabilisticGlove_{seed}.pt'))
+    model = ProbabilisticGlove.load(os.path.join(rdir, f'{tag}_ProbabilisticGlove_{seed}.pt'))
     cc = np.corrcoef(model.glove_layer.wi_mu.weight.detach()[keep].numpy())
     cc = np.abs(cc)
     ccmax = cc.copy()
@@ -96,14 +100,14 @@ for seed in seeds:
 
     # display the label with the highest correlation to a particular label
     maxes = {
-        audio_labels['display_name'][i]: (audio_labels['display_name'][idx], cc[i][idx])
+        included_labels['display_name'][i]: (included_labels['display_name'][idx], cc[i][idx])
         for i, idx in enumerate(ccmax.argmax(axis=0))
     }
     # calculate entropy
     ent = model.glove_layer.entropy().detach()[keep]
     # sort it
     ents, indices = ent.sort()
-    ordered_labels = [audio_labels['display_name'][item] for item in indices.numpy()]
+    ordered_labels = [included_labels['display_name'][item] for item in indices.numpy()]
     entropies[seed] = pd.Series(
         data=ents.numpy(), index=ordered_labels
     )
