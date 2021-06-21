@@ -1,6 +1,7 @@
 # probabilistic embeddings
 import itertools
 import pandas as pd
+import sys
 
 import numpy as np
 import torch
@@ -15,9 +16,18 @@ from torch.utils.data import DataLoader, Dataset
 
 import socket
 if socket.gethostname().endswith('pals.ucl.ac.uk'):
+    # set up pythonpath
+    ppath = '/home/petra/spond'
+    # set up data pth
+    datapath = '/home/petra/data'
+    gpu = True
+else:
+    ppath = '/opt/github.com/spond/spond/experimental'
+    datapath = ppath
+    gpu = False
 
-    import sys
-    sys.path.append('/home/petra/spond')
+sys.path.append(ppath)
+
 
 from spond.experimental.glove.glove_layer import GloveEmbeddingsDataset
 
@@ -493,10 +503,7 @@ if __name__ == '__main__':
         rdir = 'results/ProbabilisticGlove'
         model = ProbabilisticGlove.load(os.path.join(rdir, 'ProbabilisticGlove_1.pt'))
         samples = model.glove_layer.weights(n=5)
-    if True:
-        import sys
-        ppath = '/opt/github.com/spond/spond/experimental'
-        sys.path.append(ppath)
+    if False:
 
         from openimage.readfile import readlabels
 
@@ -513,21 +520,28 @@ if __name__ == '__main__':
         sim = Similarity(dirname, ProbabilisticGlove, seedvalues=(1, 2, 3, 4, 5))
         #sim.means(kernels.exponential, os.path.join(dirname, 'means_exponential.hdf5'))
         sim.means(kernels.dot, os.path.join(dirname, 'means_dot.hdf5'), mask=keep, mode='w')
-    if False:
+    if True:
         seed = 1
 
         # change to gpus=1 to use GPU. Otherwise CPU will be used
-        trainer = pl.Trainer(gpus=0, max_epochs=100, progress_bar_refresh_rate=20)
+        trainer = pl.Trainer(gpus=gpu, max_epochs=100, progress_bar_refresh_rate=20)
         # Trainer must be created before model, because we need to detect
         # what we requested for GPU.
 
-        model = ProbabilisticGlove('glove_audio.pt', batch_size=100,
+        #model = ProbabilisticGlove('glove_audio.pt', batch_size=100,
+        #                           seed=seed,
+        #                           train_cooccurrence_file='../audioset/co_occurrence_audio_all.pt')
+        tag = 'images'
+        model = ProbabilisticGlove(os.path.join(datapath, 'openimages', 'glove_imgs.pt'), batch_size=100,
                                    seed=seed,
-                                   train_cooccurrence_file='../audioset/co_occurrence_audio_all.pt')
+                                   train_cooccurrence_file=os.path.join(datapath, 'openimages', 'co_occurrence_audio.pt'))
+
         trainer.fit(model)
-        outdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
+        outdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results/openimages')
+        if not os.path.exists(outdir):
+            os.makedirs(outdir)
         clsname = model.__class__.__name__
-        outfile = os.path.join(outdir, clsname, f'{clsname}_{seed}.pt')
+        outfile = os.path.join(outdir, clsname, f'{tag}_{clsname}_{seed}.pt')
         model.save(outfile)
 
         #roundtrip = ProbabilisticGlove.load('/tmp/test.pt')
