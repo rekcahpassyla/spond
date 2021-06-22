@@ -499,6 +499,7 @@ class Similarity:
 if __name__ == '__main__':
     import os
     import kernels
+    import gc
     if False:
         rdir = 'results/ProbabilisticGlove'
         model = ProbabilisticGlove.load(os.path.join(rdir, 'ProbabilisticGlove_1.pt'))
@@ -527,19 +528,26 @@ if __name__ == '__main__':
             trainer = pl.Trainer(gpus=int(gpu), max_epochs=100, progress_bar_refresh_rate=20)
             # Trainer must be created before model, because we need to detect
             # what we requested for GPU.
-            tag = 'openimages'
-            input_embeddings = 'glove_imgs.pt'
-            co_occurrence = 'co_occurrence.pt'
+            #tag = 'openimages'
+            #input_embeddings = 'glove_imgs.pt'
+            #co_occurrence = 'co_occurrence.pt'
+            tag = 'audioset'
+            input_embeddings = 'glove_audio.pt'
+            co_occurrence = 'co_occurrence_audio_all.pt'
             model = ProbabilisticGlove(os.path.join(datapath, tag, input_embeddings), batch_size=100,
                                        seed=seed,
                                        train_cooccurrence_file=os.path.join(datapath, tag, co_occurrence))
 
             trainer.fit(model)
             outdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results', tag)
+            clsname = model.__class__.__name__
+            outdir = os.path.join(outdir, clsname)
             if not os.path.exists(outdir):
                 os.makedirs(outdir)
-            clsname = model.__class__.__name__
-            outfile = os.path.join(outdir, clsname, f'{tag}_{clsname}_{seed}.pt')
+            outfile = os.path.join(outdir, f'{tag}_{clsname}_{seed}.pt')
             model.save(outfile)
+            del model
+            del trainer
+            print(f"finished seed {seed}")
             torch.cuda.empty_cache()
-
+            gc.collect()
