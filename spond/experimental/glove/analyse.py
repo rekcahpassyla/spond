@@ -11,10 +11,12 @@ if socket.gethostname().endswith('pals.ucl.ac.uk'):
     ppath = '/home/petra/spond'
     # set up data pth
     datapath = '/home/petra/data'
-    tag = 'openimages'
+    tag = 'audioset'
     gpu = True
-    labelsfn = os.path.join(datapath, tag, 'oidv6-class-descriptions.csv')
-    resultspath = 'results'
+    labelsfn = os.path.join(datapath, tag, 'all_labels.csv')
+    resultspath = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        'results')
 else:
     ppath = '/opt/github.com/spond/spond/experimental'
     datapath = ppath
@@ -42,8 +44,11 @@ N = 200
 
 if tag == 'audioset':
     # now we need to find the indexes of the audio labels in the all-labels file
-    included_labels = pd.read_csv("/opt/github.com/spond/spond/experimental/audioset/class_labels_indices.csv",
-                                  index_col=0)
+    #included_labels = pd.read_csv("/opt/github.com/spond/spond/experimental/audioset/class_labels_indices.csv",
+    #                              index_col=0)
+    included_labels = pd.read_csv(
+        os.path.join(datapath, tag, 'class_labels_indices.csv'),
+        index_col=0)
 else:
     included_labels = pd.DataFrame({
         'mid': pd.Series(index_to_label),

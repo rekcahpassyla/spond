@@ -432,17 +432,18 @@ class Similarity:
     # for example
     # dirname/ProbabilisticGlove/ProbabilisticGlove_2.pt
     # is the ProbabilisticGlove model run with seed set to 2.
-    def __init__(self, dirname, clsobj, seedvalues):
+    def __init__(self, dirname, clsobj, seedvalues, tag=None):
         self.dirname = dirname
         self.clsobj = clsobj
         self.seedvalues = seedvalues
         self.models = {}
+        self.tag = '' if tag is None else f"{tag}_"
 
     def _load(self, seed):
         # load the model with the corresponding seed.
         # don't load all at once as this can lead to out of memory
         clsname = self.clsobj.__name__
-        filename = os.path.join(dirname, clsname, f'{clsname}_{seed}.pt')
+        filename = os.path.join(dirname, clsname, f'{self.tag}{clsname}_{seed}.pt')
         model = self.clsobj.load(filename)
         return model
 
@@ -504,24 +505,40 @@ if __name__ == '__main__':
         rdir = 'results/ProbabilisticGlove'
         model = ProbabilisticGlove.load(os.path.join(rdir, 'ProbabilisticGlove_1.pt'))
         samples = model.glove_layer.weights(n=5)
-    if False:
+    if True:
 
-        from openimage.readfile import readlabels
-
-        labelsfn = "/opt/github.com/spond/spond/experimental/audioset/all_labels.csv"
+        from spond.experimental.openimage.readfile import readlabels
+        #tag = 'openimages'
+        tag = 'audioset'
+        #labelsfn = os.path.join(datapath, tag, 'oidv6-class-descriptions.csv')
+        labelsfn = os.path.join(datapath, tag, "all_labels.csv")
 
         labels, names = readlabels(labelsfn, rootdir=None)
 
         # now we need to find the indexes of the audio labels in the all-labels file
-        audio_labels = pd.read_csv("/opt/github.com/spond/spond/experimental/audioset/class_labels_indices.csv",
-                                   index_col=0)
-        keep = np.array([labels[label] for label in audio_labels['mid'].values])
+        #included_labels = pd.read_csv("/opt/github.com/spond/spond/experimental/audioset/class_labels_indices.csv",
+        #                           index_col=0)
+        if tag == 'audioset':
+            included_labels = pd.read_csv(
+                os.path.join(datapath, tag, "class_labels_indices.csv"),
+                index_col=0
+            )
+        else:
+            index_to_label = {v: k for k, v in labels.items()}
+            index_to_name = {v: names[k] for k, v in labels.items()}
+            included_labels = pd.DataFrame({
+                'mid': pd.Series(index_to_label),
+                'display_name': pd.Series(index_to_name)
+            })
 
-        dirname = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
-        sim = Similarity(dirname, ProbabilisticGlove, seedvalues=(1, 2, 3, 4, 5))
+                
+        keep = np.array([labels[label] for label in included_labels['mid'].values])
+
+        dirname = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results', tag, 'ProbabilisticGlove')
+        sim = Similarity(dirname, ProbabilisticGlove, seedvalues=(1, 2, 3, 4, 5), tag=tag)
         #sim.means(kernels.exponential, os.path.join(dirname, 'means_exponential.hdf5'))
-        sim.means(kernels.dot, os.path.join(dirname, 'means_dot.hdf5'), mask=keep, mode='w')
-    if True:
+        sim.means(kernels.dot, os.path.join(dirname, f'{tag}_means_dot.hdf5'), mask=keep, mode='w')
+    if False:
         seeds = (1, 2, 3, 4, 5)
         for seed in seeds:
             # change to gpus=1 to use GPU. Otherwise CPU will be used
