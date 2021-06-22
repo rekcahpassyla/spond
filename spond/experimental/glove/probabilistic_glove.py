@@ -506,39 +506,9 @@ if __name__ == '__main__':
         model = ProbabilisticGlove.load(os.path.join(rdir, 'ProbabilisticGlove_1.pt'))
         samples = model.glove_layer.weights(n=5)
     if True:
-
         from spond.experimental.openimage.readfile import readlabels
         #tag = 'openimages'
         tag = 'audioset'
-        #labelsfn = os.path.join(datapath, tag, 'oidv6-class-descriptions.csv')
-        labelsfn = os.path.join(datapath, tag, "all_labels.csv")
-
-        labels, names = readlabels(labelsfn, rootdir=None)
-
-        # now we need to find the indexes of the audio labels in the all-labels file
-        #included_labels = pd.read_csv("/opt/github.com/spond/spond/experimental/audioset/class_labels_indices.csv",
-        #                           index_col=0)
-        if tag == 'audioset':
-            included_labels = pd.read_csv(
-                os.path.join(datapath, tag, "class_labels_indices.csv"),
-                index_col=0
-            )
-        else:
-            index_to_label = {v: k for k, v in labels.items()}
-            index_to_name = {v: names[k] for k, v in labels.items()}
-            included_labels = pd.DataFrame({
-                'mid': pd.Series(index_to_label),
-                'display_name': pd.Series(index_to_name)
-            })
-
-                
-        keep = np.array([labels[label] for label in included_labels['mid'].values])
-
-        dirname = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results', tag, 'ProbabilisticGlove')
-        sim = Similarity(dirname, ProbabilisticGlove, seedvalues=(1, 2, 3, 4, 5), tag=tag)
-        #sim.means(kernels.exponential, os.path.join(dirname, 'means_exponential.hdf5'))
-        sim.means(kernels.dot, os.path.join(dirname, f'{tag}_means_dot.hdf5'), mask=keep, mode='w')
-    if False:
         seeds = (1, 2, 3, 4, 5)
         for seed in seeds:
             # change to gpus=1 to use GPU. Otherwise CPU will be used
@@ -548,7 +518,6 @@ if __name__ == '__main__':
             #tag = 'openimages'
             #input_embeddings = 'glove_imgs.pt'
             #co_occurrence = 'co_occurrence.pt'
-            tag = 'audioset'
             input_embeddings = 'glove_audio.pt'
             co_occurrence = 'co_occurrence_audio_all.pt'
             model = ProbabilisticGlove(os.path.join(datapath, tag, input_embeddings), batch_size=100,
@@ -568,3 +537,30 @@ if __name__ == '__main__':
             print(f"finished seed {seed}")
             torch.cuda.empty_cache()
             gc.collect()
+
+        #labelsfn = os.path.join(datapath, tag, 'oidv6-class-descriptions.csv')
+        labelsfn = os.path.join(datapath, tag, "all_labels.csv")
+
+        labels, names = readlabels(labelsfn, rootdir=None)
+
+        # now we need to find the indexes of the audio labels in the all-labels file
+        if tag == 'audioset':
+            included_labels = pd.read_csv(
+                os.path.join(datapath, tag, "class_labels_indices.csv"),
+                index_col=0
+            )
+        else:
+            # if it's not audioset then just use the default
+            index_to_label = {v: k for k, v in labels.items()}
+            index_to_name = {v: names[k] for k, v in labels.items()}
+            included_labels = pd.DataFrame({
+                'mid': pd.Series(index_to_label),
+                'display_name': pd.Series(index_to_name)
+            })
+
+
+        keep = np.array([labels[label] for label in included_labels['mid'].values])
+
+        dirname = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results', tag, 'ProbabilisticGlove')
+        sim = Similarity(dirname, ProbabilisticGlove, seedvalues=(1, 2, 3, 4, 5), tag=tag)
+        sim.means(kernels.dot, os.path.join(dirname, f'{tag}_means_dot.hdf5'), mask=keep, mode='w')
