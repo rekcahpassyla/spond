@@ -541,4 +541,5 @@ if __name__ == '__main__':
             clsname = model.__class__.__name__
             outfile = os.path.join(outdir, clsname, f'{tag}_{clsname}_{seed}.pt')
             model.save(outfile)
+            torch.cuda.empty_cache()
 
