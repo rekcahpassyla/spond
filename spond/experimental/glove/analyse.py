@@ -50,15 +50,15 @@ else:
         'display_name': pd.Series(index_to_name)
     })
 
-corrs = {}
+#corrs = {}
 
 
 
 for seed in seeds:
     df = s[str(seed)]
-    corrs[seed] = np.corrcoef(df.values)
+    corrs = np.corrcoef(df.values)
     plt.figure()
-    fig = plt.imshow(corrs[seed])
+    fig = plt.imshow(corrs)
     plt.colorbar(fig)
     plt.title(f'Correlation of dot product similarity, {seed}')
     plt.savefig(os.path.join(rdir, f'{tag}_dotsim_corr_{seed}.png'))
@@ -83,6 +83,8 @@ import os
 
 entropies = {}
 models = {}
+maxcorrs = {}
+mincorrs = {}
 for seed in seeds:
 
     model = ProbabilisticGlove.load(os.path.join(rdir, f'{tag}_ProbabilisticGlove_{seed}.pt'))
@@ -100,6 +102,13 @@ for seed in seeds:
         included_labels['display_name'][i]: (included_labels['display_name'][idx], cc[i][idx])
         for i, idx in enumerate(ccmax.argmax(axis=0))
     }
+    mins = {
+        included_labels['display_name'][i]: (included_labels['display_name'][idx], cc[i][idx])
+        for i, idx in enumerate(ccmin.argmin(axis=0))
+    }
+        
+    maxcorrs[seed] = maxes
+    mincorrs[seed] = mins
     # calculate entropy
     ent = model.glove_layer.entropy().detach()[keep]
     # sort it
