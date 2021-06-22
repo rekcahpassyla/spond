@@ -521,23 +521,23 @@ if __name__ == '__main__':
         #sim.means(kernels.exponential, os.path.join(dirname, 'means_exponential.hdf5'))
         sim.means(kernels.dot, os.path.join(dirname, 'means_dot.hdf5'), mask=keep, mode='w')
     if True:
-        seed = 1
+        seed = 2
 
         # change to gpus=1 to use GPU. Otherwise CPU will be used
-        trainer = pl.Trainer(gpus=gpu, max_epochs=100, progress_bar_refresh_rate=20)
+        trainer = pl.Trainer(gpus=int(gpu), max_epochs=100, progress_bar_refresh_rate=20)
         # Trainer must be created before model, because we need to detect
         # what we requested for GPU.
 
         #model = ProbabilisticGlove('glove_audio.pt', batch_size=100,
         #                           seed=seed,
         #                           train_cooccurrence_file='../audioset/co_occurrence_audio_all.pt')
-        tag = 'images'
-        model = ProbabilisticGlove(os.path.join(datapath, 'openimages', 'glove_imgs.pt'), batch_size=100,
+        tag = 'openimages'
+        model = ProbabilisticGlove(os.path.join(datapath, tag, 'glove_imgs.pt'), batch_size=100,
                                    seed=seed,
-                                   train_cooccurrence_file=os.path.join(datapath, 'openimages', 'co_occurrence_audio.pt'))
+                                   train_cooccurrence_file=os.path.join(datapath, tag, 'co_occurrence.pt'))
 
         trainer.fit(model)
-        outdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results/openimages')
+        outdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results', tag)
         if not os.path.exists(outdir):
             os.makedirs(outdir)
         clsname = model.__class__.__name__

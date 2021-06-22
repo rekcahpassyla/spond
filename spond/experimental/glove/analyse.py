@@ -25,7 +25,9 @@ else:
 
 sys.path.append(ppath)
 
-from openimage.readfile import readlabels
+from spond.experimental.openimage.readfile import readlabels
+rdir = os.path.join(resultspath, f'{tag}/ProbabilisticGlove')
+
 
 labels, names = readlabels(labelsfn, rootdir=None)
 
@@ -33,7 +35,7 @@ name_to_label = {v: k for k, v in names.items()}
 index_to_label = {v: k for k, v in labels.items()}
 index_to_name = {v: names[k] for k, v in labels.items()}
 
-s = pd.HDFStore('means_dot.hdf5', 'r')
+s = pd.HDFStore(os.path.join(rdir, f'{tag}_means_dot.hdf5'), 'r')
 seeds = (1, 2, 3, 4, 5)
 
 N = 200
@@ -50,6 +52,8 @@ else:
 
 corrs = {}
 
+
+
 for seed in seeds:
     df = s[str(seed)]
     corrs[seed] = np.corrcoef(df.values)
@@ -57,7 +61,7 @@ for seed in seeds:
     fig = plt.imshow(corrs[seed])
     plt.colorbar(fig)
     plt.title(f'Correlation of dot product similarity, {seed}')
-    plt.savefig(f'/opt/github.com/spond/spond/experimental/glove/results/dotsim_corr_{seed}.png')
+    plt.savefig(os.path.join(rdir, f'{tag}_dotsim_corr_{seed}.png'))
 
 # now work out cross correlations
 
@@ -65,31 +69,24 @@ crosscorrs = {}
 
 for i, seed1 in enumerate(seeds):
     for seed2 in seeds[i+1:]:
-        c1 = np.triu(s[str(seed1)].values)
-        c2 = np.triu(s[str(seed2)].values)
-        c1[np.isclose(c1, 0)] = np.nan
-        c2[np.isclose(c2, 0)] = np.nan
-        c1 = c1.ravel()
-        c2 = c2.ravel()
-        c1 = c1[~np.isnan(c1)]
-        c2 = c2[~np.isnan(c2)]
+        c1 = s[str(seed1)].values.ravel()
+        c2 = s[str(seed2)].values.ravel()
         crosscorrs[(seed1, seed2)] = np.corrcoef(c1, c2)[0][1]
-
 
 s.close()
 
 keep = np.array([labels[label] for label in included_labels['mid'].values])
 
-rdir = f'results/{tag}/ProbabilisticGlove'
 from probabilistic_glove import ProbabilisticGlove
 import os
 
 
 entropies = {}
-
+models = {}
 for seed in seeds:
 
     model = ProbabilisticGlove.load(os.path.join(rdir, f'{tag}_ProbabilisticGlove_{seed}.pt'))
+    models[seed] = model
     cc = np.corrcoef(model.glove_layer.wi_mu.weight.detach()[keep].numpy())
     cc = np.abs(cc)
     ccmax = cc.copy()
