@@ -521,30 +521,24 @@ if __name__ == '__main__':
         #sim.means(kernels.exponential, os.path.join(dirname, 'means_exponential.hdf5'))
         sim.means(kernels.dot, os.path.join(dirname, 'means_dot.hdf5'), mask=keep, mode='w')
     if True:
-        seed = 2
+        seeds = (1, 2, 3, 4, 5)
+        for seed in seeds:
+            # change to gpus=1 to use GPU. Otherwise CPU will be used
+            trainer = pl.Trainer(gpus=int(gpu), max_epochs=100, progress_bar_refresh_rate=20)
+            # Trainer must be created before model, because we need to detect
+            # what we requested for GPU.
+            tag = 'openimages'
+            input_embeddings = 'glove_imgs.pt'
+            co_occurrence = 'co_occurrence.pt'
+            model = ProbabilisticGlove(os.path.join(datapath, tag, input_embeddings), batch_size=100,
+                                       seed=seed,
+                                       train_cooccurrence_file=os.path.join(datapath, tag, co_occurrence))
 
-        # change to gpus=1 to use GPU. Otherwise CPU will be used
-        trainer = pl.Trainer(gpus=int(gpu), max_epochs=100, progress_bar_refresh_rate=20)
-        # Trainer must be created before model, because we need to detect
-        # what we requested for GPU.
-
-        #model = ProbabilisticGlove('glove_audio.pt', batch_size=100,
-        #                           seed=seed,
-        #                           train_cooccurrence_file='../audioset/co_occurrence_audio_all.pt')
-        tag = 'openimages'
-        model = ProbabilisticGlove(os.path.join(datapath, tag, 'glove_imgs.pt'), batch_size=100,
-                                   seed=seed,
-                                   train_cooccurrence_file=os.path.join(datapath, tag, 'co_occurrence.pt'))
-
-        trainer.fit(model)
-        outdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results', tag)
-        if not os.path.exists(outdir):
-            os.makedirs(outdir)
-        clsname = model.__class__.__name__
-        outfile = os.path.join(outdir, clsname, f'{tag}_{clsname}_{seed}.pt')
-        model.save(outfile)
-
-        #roundtrip = ProbabilisticGlove.load('/tmp/test.pt')
-
-
+            trainer.fit(model)
+            outdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results', tag)
+            if not os.path.exists(outdir):
+                os.makedirs(outdir)
+            clsname = model.__class__.__name__
+            outfile = os.path.join(outdir, clsname, f'{tag}_{clsname}_{seed}.pt')
+            model.save(outfile)
 
