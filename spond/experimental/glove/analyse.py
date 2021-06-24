@@ -75,6 +75,7 @@ for seed in seeds:
     plt.savefig(os.path.join(rdir, f'{tag}_dotsim_corr_{seed}.png'))
     del corrs
     del df
+    del fig
     gc.collect()
 
 # now work out cross correlations
@@ -148,7 +149,7 @@ for seed in seeds:
     ents, indices = ent.sort()
     ordered_labels = [included_labels['display_name'][item] for item in indices.numpy()]
     entropies[seed] = pd.Series(
-        data=ents.numpy(), index=ordered_labels
+        data=ents.numpy().copy(), index=ordered_labels
     )
     del cc
     del ccmax
