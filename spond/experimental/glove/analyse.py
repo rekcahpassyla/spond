@@ -71,22 +71,22 @@ else:
 
 
 for seed in seeds:
-    print(f"Calculating self-correlation for seed {seed}")
     df = s[str(seed)]
-    corrs = np.corrcoef(df.values)
-    plt.figure()
-    fig = plt.imshow(corrs)
-    plt.colorbar(fig)
-    plt.title(f'Correlation of dot product similarity, {seed}')
-    plt.savefig(os.path.join(rdir, f'{tag}_dotsim_corr_{seed}.png'))
-
-    del fig
-    gc.collect()
+    # print(f"Calculating self-correlation for seed {seed}")
+    # corrs = np.corrcoef(df.values)
+    # plt.figure()
+    # fig = plt.imshow(corrs)
+    # plt.colorbar(fig)
+    # plt.title(f'Correlation of dot product similarity, {seed}')
+    # plt.savefig(os.path.join(rdir, f'{tag}_dotsim_corr_{seed}.png'))
+    #
+    # del fig
+    # gc.collect()
 
     print(f"Calculating self-distance for seed {seed}")
     dist = cdist(df.values, df.values)  # euclidean is the default
     plt.figure()
-    fig = plt.imshow(corrs)
+    fig = plt.imshow(dist)
     plt.colorbar(fig)
     plt.title(f'Distance of dot product similarity, {seed}')
     plt.savefig(os.path.join(rdir, f'{tag}_dotsim_dist_{seed}.png'))
