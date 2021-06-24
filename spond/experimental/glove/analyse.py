@@ -38,6 +38,7 @@ index_to_label = {v: k for k, v in labels.items()}
 index_to_name = {v: names[k] for k, v in labels.items()}
 
 s = pd.HDFStore(os.path.join(rdir, f'{tag}_means_dot.hdf5'), 'r')
+outfile = pd.HDFStore(os.path.join(rdir, f'{tag}_analytics.hdf5'))
 seeds = (1, 2, 3, 4, 5)
 
 N = 200
@@ -91,27 +92,34 @@ models = {}
 maxcorrs = {}
 mincorrs = {}
 for seed in seeds:
-
     model = ProbabilisticGlove.load(os.path.join(rdir, f'{tag}_ProbabilisticGlove_{seed}.pt'))
     models[seed] = model
     cc = np.corrcoef(model.glove_layer.wi_mu.weight.detach()[keep].numpy())
     cc = np.abs(cc)
+    # replace values of 1 with inf or -inf so that we can sort easily
     ccmax = cc.copy()
     ccmax[np.isclose(cc, 1)] = -np.inf
 
     ccmin = cc.copy()
     ccmin[np.isclose(cc, 1)] = np.inf
 
-    # display the label with the highest correlation to a particular label
-    maxes = {
-        included_labels['display_name'][i]: (included_labels['display_name'][idx], cc[i][idx])
-        for i, idx in enumerate(ccmax.argmax(axis=0))
-    }
-    mins = {
-        included_labels['display_name'][i]: (included_labels['display_name'][idx], cc[i][idx])
-        for i, idx in enumerate(ccmin.argmin(axis=0))
-    }
-        
+    # topcorrs are the indexes of the highest correlations sorted by column
+    topcorrs = ccmax.argsort(axis=0)[-5:]
+    bottomcorrs = ccmin.argsort(axis=0)[:5]
+
+    # make into data structures
+    maxes = pd.Series({
+        included_labels['display_name'][i]:
+            pd.Series(index=included_labels['display_name'][topcorrs[::-1][:,i]].values, data=ccmax[i][topcorrs[::-1][:,i]])
+        for i in range(ccmax.shape[0])
+    })
+
+    mins = pd.Series({
+        included_labels['display_name'][i]:
+            pd.Series(index=included_labels['display_name'][bottomcorrs[:,i]].values, data=ccmin[i][bottomcorrs[:,i]])
+        for i in range(ccmin.shape[0])
+    })
+
     maxcorrs[seed] = maxes
     mincorrs[seed] = mins
     # calculate entropy
@@ -123,9 +131,7 @@ for seed in seeds:
         data=ents.numpy(), index=ordered_labels
     )
 
-# do the same for lowest
-#mins = {
-#    index_to_name[start + i]: (index_to_name[start + offset], cc[i][offset])
-#    for i, offset in enumerate(ccmin.argmin(axis=0))
-#}
+maxcorrs = pd.DataFrame(maxcorrs)
+mincorrs = pd.DataFrame(mincorrs)
+entropies = pd.DataFrame(entropies)
 
