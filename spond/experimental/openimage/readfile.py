@@ -60,8 +60,11 @@ def readlabels(labelsfn, rootdir='.'):
                     continue
             # label,objectname - maybe do something else with objectname later
             # for now we only care about label
-            label, objectname = line.strip().split(",")[:2]
+            label, objectname = line.strip().split(",", 1)[:2]
             labels[label] = idx-1
+            # the objectname may have " around it
+            if objectname.startswith("\"") and objectname.endswith("\""):
+                objectname = objectname[1:-1]
             names[label] = objectname
     return labels, names
 

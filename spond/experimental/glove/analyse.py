@@ -14,10 +14,10 @@ if socket.gethostname().endswith('pals.ucl.ac.uk'):
     # set up data pth
     datapath = '/home/petra/data'
     gpu = True
-    tag = 'audioset'
-    labelsfn = os.path.join(datapath, tag, 'all_labels.csv')
-    #tag = 'openimages'
-    #labelsfn = os.path.join(datapath, tag, 'oidv6-class-descriptions.csv')
+    #tag = 'audioset'
+    #labelsfn = os.path.join(datapath, tag, 'all_labels.csv')
+    tag = 'openimages'
+    labelsfn = os.path.join(datapath, tag, 'oidv6-class-descriptions.csv')
     resultspath = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
         'results')
@@ -112,7 +112,7 @@ mincorrs = {}
 for seed in seeds:
     print(f"Calculating max/min correlations for seed {seed}")
     model = ProbabilisticGlove.load(os.path.join(rdir, f'{tag}_ProbabilisticGlove_{seed}.pt'))
-    models[seed] = model
+    #models[seed] = model
     cc = np.corrcoef(model.glove_layer.wi_mu.weight.detach()[keep].numpy())
     cc = np.abs(cc)
     # replace values of 1 with inf or -inf so that we can sort easily
@@ -149,22 +149,44 @@ for seed in seeds:
     entropies[seed] = pd.Series(
         data=ents.numpy(), index=ordered_labels
     )
+    del ccmax
+    del ccmin
+    del topcorrs
+    del bottomcorrs
+    del ent
+    gc.collect()
 
 maxcorrs = pd.DataFrame(maxcorrs)
 mincorrs = pd.DataFrame(mincorrs)
 entropies = pd.Series(entropies)
 
+plt.figure()
+for seed in seeds:
+    plt.hist(entropies[seed].values, alpha=0.3, bins=100, label=str(seed))
+plt.title(f'Entropies for {tag} per seed')
+plt.legend()
+plt.savefig(os.path.join(rdir, f'{tag}_entropies.png'))
+
 outfile['maxcorrs'] = maxcorrs
 outfile['mincorrs'] = mincorrs
 outfile['entropies'] = entropies
 
+# calculate correlations of counts with entropies, for each seed
+# entropies index are alphabetical, we have to match up with the counts
 
 cooc = torch.load(train_cooccurrence_file)
 cooc = cooc.coalesce().to_dense()
 counts = cooc.sum(axis=0)[keep].numpy()
 counts = pd.Series(data=counts, index=[index_to_name[i] for i in keep])
-# calculate correlations of counts with entropies, for each seed
-# entropies index are alphabetical, we have to match up with the counts
+
+entropy_count_corr = pd.Series({
+    seed: np.corrcoef(
+        counts.sort_index().values,
+        entropies[seed].sort_index().values
+    )[0][1] for seed in seeds
+})
+
+outfile['entropy_count_corr'] = entropy_count_corr
 
 outfile.close()
 
