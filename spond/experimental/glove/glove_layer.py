@@ -231,7 +231,7 @@ class GloveSimple(pl.LightningModule):
         # Put these 2 layers into B-network
         # 2 branches which will connect at the top
         # Say we have L and R where L = openimages, R = something else
-        # Top layer will combine audioset and openimage
+        # Top layer will combine audioset and openimages
         # and will be the "alignment layer"
         # Will take collective set of all concepts in both domains
         # The aligner layer will backpropagate down

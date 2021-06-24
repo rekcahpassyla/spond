@@ -5,21 +5,22 @@ import numpy as np
 from matplotlib import pyplot as plt
 import pandas as pd
 import torch
+from scipy.spatial.distance import cdist
 
 
 import socket
 if socket.gethostname().endswith('pals.ucl.ac.uk'):
     # set up pythonpath
     ppath = '/home/petra/spond'
-    # set up data pth
+    # set up data path
     datapath = '/home/petra/data'
     gpu = True
-    #tag = 'audioset'
-    #labelsfn = os.path.join(datapath, tag, 'all_labels.csv')
-    #train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence_audio_all.pt')
-    tag = 'openimages'
-    labelsfn = os.path.join(datapath, tag, 'oidv6-class-descriptions.csv')
-    train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence.pt')
+    tag = 'audioset'
+    labelsfn = os.path.join(datapath, tag, 'all_labels.csv')
+    train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence_audio_all.pt')
+    #tag = 'openimages'
+    #labelsfn = os.path.join(datapath, tag, 'oidv6-class-descriptions.csv')
+    #train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence.pt')
     resultspath = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
         'results')
@@ -35,7 +36,10 @@ else:
 
 sys.path.append(ppath)
 
-from spond.experimental.openimage.readfile import readlabels
+# Can only import after path is set above
+from spond.experimental.glove.probabilistic_glove import ProbabilisticGlove
+from spond.experimental.openimages.readfile import readlabels
+
 rdir = os.path.join(resultspath, f'{tag}/ProbabilisticGlove')
 
 
@@ -75,10 +79,23 @@ for seed in seeds:
     plt.colorbar(fig)
     plt.title(f'Correlation of dot product similarity, {seed}')
     plt.savefig(os.path.join(rdir, f'{tag}_dotsim_corr_{seed}.png'))
+
+    del fig
+    gc.collect()
+
+    print(f"Calculating self-distance for seed {seed}")
+    dist = cdist(df.values, df.values)  # euclidean is the default
+    plt.figure()
+    fig = plt.imshow(corrs)
+    plt.colorbar(fig)
+    plt.title(f'Distance of dot product similarity, {seed}')
+    plt.savefig(os.path.join(rdir, f'{tag}_dotsim_dist_{seed}.png'))
+
     del corrs
     del df
     del fig
     gc.collect()
+
 
 # now work out cross correlations
 
@@ -104,9 +121,6 @@ del crosscorrs
 gc.collect()
 
 keep = np.array([labels[label] for label in included_labels['mid'].values])
-
-from probabilistic_glove import ProbabilisticGlove
-import os
 
 
 entropies = {}
