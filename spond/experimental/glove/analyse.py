@@ -74,6 +74,7 @@ for seed in seeds:
     plt.title(f'Correlation of dot product similarity, {seed}')
     plt.savefig(os.path.join(rdir, f'{tag}_dotsim_corr_{seed}.png'))
     del corrs
+    del df
     gc.collect()
 
 # now work out cross correlations
@@ -149,6 +150,7 @@ for seed in seeds:
     entropies[seed] = pd.Series(
         data=ents.numpy(), index=ordered_labels
     )
+    del cc
     del ccmax
     del ccmin
     del topcorrs
