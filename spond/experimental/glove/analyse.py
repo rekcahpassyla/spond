@@ -15,12 +15,12 @@ if socket.gethostname().endswith('pals.ucl.ac.uk'):
     # set up data path
     datapath = '/home/petra/data'
     gpu = True
-    tag = 'audioset'
-    labelsfn = os.path.join(datapath, tag, 'all_labels.csv')
-    train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence_audio_all.pt')
-    #tag = 'openimages'
-    #labelsfn = os.path.join(datapath, tag, 'oidv6-class-descriptions.csv')
-    #train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence.pt')
+    #tag = 'audioset'
+    #labelsfn = os.path.join(datapath, tag, 'all_labels.csv')
+    #train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence_audio_all.pt')
+    tag = 'openimages'
+    labelsfn = os.path.join(datapath, tag, 'oidv6-class-descriptions.csv')
+    train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence.pt')
     resultspath = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
         'results')
@@ -127,12 +127,12 @@ entropies = {}
 models = {}
 maxcorrs = {}
 mincorrs = {}
+metric = 'correlation'
 for seed in seeds:
-    print(f"Calculating max/min correlations for seed {seed}")
+    print(f"Calculating max/min {metric}s for seed {seed}")
     model = ProbabilisticGlove.load(os.path.join(rdir, f'{tag}_ProbabilisticGlove_{seed}.pt'))
-    #models[seed] = model
     cc = np.corrcoef(model.glove_layer.wi_mu.weight.detach()[keep].numpy())
-    cc = np.abs(cc)
+    #cc = np.abs(cc)
     # replace values of 1 with inf or -inf so that we can sort easily
     ccmax = cc.copy()
     ccmax[np.isclose(cc, 1)] = -np.inf
@@ -159,7 +159,8 @@ for seed in seeds:
 
     maxcorrs[seed] = maxes
     mincorrs[seed] = mins
-    # calculate entropy
+
+# calculate entropy
     ent = model.glove_layer.entropy().detach()[keep]
     # sort it
     ents, indices = ent.sort()
