@@ -16,12 +16,14 @@ if socket.gethostname().endswith('pals.ucl.ac.uk'):
     gpu = True
     #tag = 'audioset'
     #labelsfn = os.path.join(datapath, tag, 'all_labels.csv')
+    #train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence_audio_all.pt')
     tag = 'openimages'
     labelsfn = os.path.join(datapath, tag, 'oidv6-class-descriptions.csv')
+    train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence.pt')
     resultspath = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
         'results')
-    train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence_audio_all.pt')
+
 else:
     ppath = '/opt/github.com/spond/spond/experimental'
     datapath = ppath
