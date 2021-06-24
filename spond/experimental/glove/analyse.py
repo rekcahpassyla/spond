@@ -61,6 +61,7 @@ else:
 
 
 for seed in seeds:
+    print(f"Calculating self-correlation for seed {seed}")
     df = s[str(seed)]
     corrs = np.corrcoef(df.values)
     plt.figure()
@@ -77,6 +78,7 @@ crosscorrs = {}
 
 for i, seed1 in enumerate(seeds):
     for seed2 in seeds[i+1:]:
+        print(f"Calculating cross-correlation for {seed1} x {seed2}")
         c1 = s[str(seed1)].values.ravel()
         c2 = s[str(seed2)].values.ravel()
         crosscorrs[(seed1, seed2)] = np.corrcoef(c1, c2)[0][1]
@@ -104,6 +106,7 @@ models = {}
 maxcorrs = {}
 mincorrs = {}
 for seed in seeds:
+    print(f"Calculating max/min correlations for seed {seed}")
     model = ProbabilisticGlove.load(os.path.join(rdir, f'{tag}_ProbabilisticGlove_{seed}.pt'))
     models[seed] = model
     cc = np.corrcoef(model.glove_layer.wi_mu.weight.detach()[keep].numpy())
