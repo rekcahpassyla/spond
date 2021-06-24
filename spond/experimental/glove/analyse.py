@@ -4,6 +4,7 @@ import sys
 import numpy as np
 from matplotlib import pyplot as plt
 import pandas as pd
+import torch
 
 
 import socket
@@ -13,13 +14,14 @@ if socket.gethostname().endswith('pals.ucl.ac.uk'):
     # set up data pth
     datapath = '/home/petra/data'
     gpu = True
-    #tag = 'audioset'
-    #labelsfn = os.path.join(datapath, tag, 'all_labels.csv')
-    tag = 'openimages'
-    labelsfn = os.path.join(datapath, tag, 'oidv6-class-descriptions.csv')
+    tag = 'audioset'
+    labelsfn = os.path.join(datapath, tag, 'all_labels.csv')
+    #tag = 'openimages'
+    #labelsfn = os.path.join(datapath, tag, 'oidv6-class-descriptions.csv')
     resultspath = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
         'results')
+    train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence_audio_all.pt')
 else:
     ppath = '/opt/github.com/spond/spond/experimental'
     datapath = ppath
@@ -27,6 +29,7 @@ else:
     tag = 'audioset'
     labelsfn = "/opt/github.com/spond/spond/experimental/audioset/all_labels.csv"
     resultspath = '/opt/github.com/spond/spond/experimental/glove/results/'
+    train_cooccurrence_file = ''
 
 sys.path.append(ppath)
 
@@ -39,6 +42,7 @@ labels, names = readlabels(labelsfn, rootdir=None)
 name_to_label = {v: k for k, v in names.items()}
 index_to_label = {v: k for k, v in labels.items()}
 index_to_name = {v: names[k] for k, v in labels.items()}
+name_to_index = {v: k for k, v in index_to_name.items()}
 
 s = pd.HDFStore(os.path.join(rdir, f'{tag}_means_dot.hdf5'), 'r')
 outfile = pd.HDFStore(os.path.join(rdir, f'{tag}_analytics.hdf5'))
@@ -148,11 +152,19 @@ for seed in seeds:
 
 maxcorrs = pd.DataFrame(maxcorrs)
 mincorrs = pd.DataFrame(mincorrs)
-entropies = pd.DataFrame(entropies)
+entropies = pd.Series(entropies)
 
 outfile['maxcorrs'] = maxcorrs
 outfile['mincorrs'] = mincorrs
 outfile['entropies'] = entropies
+
+
+cooc = torch.load(train_cooccurrence_file)
+cooc = cooc.coalesce().to_dense()
+counts = cooc.sum(axis=0)[keep].numpy()
+counts = pd.Series(data=counts, index=[index_to_name[i] for i in keep])
+# calculate correlations of counts with entropies, for each seed
+# entropies index are alphabetical, we have to match up with the counts
 
 outfile.close()
 
