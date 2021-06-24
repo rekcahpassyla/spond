@@ -1,3 +1,4 @@
+import gc
 import os
 import sys
 import numpy as np
@@ -11,9 +12,11 @@ if socket.gethostname().endswith('pals.ucl.ac.uk'):
     ppath = '/home/petra/spond'
     # set up data pth
     datapath = '/home/petra/data'
-    tag = 'audioset'
     gpu = True
-    labelsfn = os.path.join(datapath, tag, 'all_labels.csv')
+    #tag = 'audioset'
+    #labelsfn = os.path.join(datapath, tag, 'all_labels.csv')
+    tag = 'openimages'
+    labelsfn = os.path.join(datapath, tag, 'oidv6-class-descriptions.csv')
     resultspath = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
         'results')
@@ -56,9 +59,6 @@ else:
         'display_name': pd.Series(index_to_name)
     })
 
-#corrs = {}
-
-
 
 for seed in seeds:
     df = s[str(seed)]
@@ -68,6 +68,8 @@ for seed in seeds:
     plt.colorbar(fig)
     plt.title(f'Correlation of dot product similarity, {seed}')
     plt.savefig(os.path.join(rdir, f'{tag}_dotsim_corr_{seed}.png'))
+    del corrs
+    gc.collect()
 
 # now work out cross correlations
 
@@ -78,8 +80,18 @@ for i, seed1 in enumerate(seeds):
         c1 = s[str(seed1)].values.ravel()
         c2 = s[str(seed2)].values.ravel()
         crosscorrs[(seed1, seed2)] = np.corrcoef(c1, c2)[0][1]
+        del c1
+        del c2
+        gc.collect()
 
 s.close()
+
+crosscorrs = pd.Series(crosscorrs)
+outfile['crosscorrs'] = crosscorrs
+outfile.flush()
+
+del crosscorrs
+gc.collect()
 
 keep = np.array([labels[label] for label in included_labels['mid'].values])
 
@@ -134,4 +146,10 @@ for seed in seeds:
 maxcorrs = pd.DataFrame(maxcorrs)
 mincorrs = pd.DataFrame(mincorrs)
 entropies = pd.DataFrame(entropies)
+
+outfile['maxcorrs'] = maxcorrs
+outfile['mincorrs'] = mincorrs
+outfile['entropies'] = entropies
+
+outfile.close()
 
