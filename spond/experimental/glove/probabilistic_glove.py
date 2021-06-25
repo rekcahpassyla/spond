@@ -561,7 +561,8 @@ if __name__ == '__main__':
 
         keep = np.array([labels[label] for label in included_labels['mid'].values])
 
-        dirname = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results', tag, 'ProbabilisticGlove')
+        dirname = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), 'results', tag)
         sim = Similarity(dirname, ProbabilisticGlove, seedvalues=(1, 2, 3, 4, 5), tag=tag)
         sim.means(kernels.dot, os.path.join(dirname, f'{tag}_means_dot.hdf5'), mask=keep, mode='w')
 

@@ -15,12 +15,12 @@ if socket.gethostname().endswith('pals.ucl.ac.uk'):
     # set up data path
     datapath = '/home/petra/data'
     gpu = True
-    #tag = 'audioset'
-    #labelsfn = os.path.join(datapath, tag, 'all_labels.csv')
-    #train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence_audio_all.pt')
-    tag = 'openimages'
-    labelsfn = os.path.join(datapath, tag, 'oidv6-class-descriptions.csv')
-    train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence.pt')
+    tag = 'audioset'
+    labelsfn = os.path.join(datapath, tag, 'all_labels.csv')
+    train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence_audio_all.pt')
+    #tag = 'openimages'
+    #labelsfn = os.path.join(datapath, tag, 'oidv6-class-descriptions.csv')
+    #train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence.pt')
     resultspath = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
         'results')
@@ -72,24 +72,24 @@ else:
 
 for seed in seeds:
     df = s[str(seed)]
-    # print(f"Calculating self-correlation for seed {seed}")
-    # corrs = np.corrcoef(df.values)
-    # plt.figure()
-    # fig = plt.imshow(corrs)
-    # plt.colorbar(fig)
-    # plt.title(f'Correlation of dot product similarity, {seed}')
-    # plt.savefig(os.path.join(rdir, f'{tag}_dotsim_corr_{seed}.png'))
-    #
-    # del fig
-    # gc.collect()
-
-    print(f"Calculating self-distance for seed {seed}")
-    dist = cdist(df.values, df.values)  # euclidean is the default
+    print(f"Calculating self-correlation for seed {seed}")
+    corrs = np.corrcoef(df.values)
     plt.figure()
-    fig = plt.imshow(dist)
+    fig = plt.imshow(corrs)
     plt.colorbar(fig)
-    plt.title(f'Distance of dot product similarity, {seed}')
-    plt.savefig(os.path.join(rdir, f'{tag}_dotsim_dist_{seed}.png'))
+    plt.title(f'Correlation of dot product similarity, {seed}')
+    plt.savefig(os.path.join(rdir, f'{tag}_dotsim_corr_{seed}.png'))
+
+    del fig
+    gc.collect()
+
+    # print(f"Calculating self-distance for seed {seed}")
+    # dist = cdist(df.values, df.values)  # euclidean is the default
+    # plt.figure()
+    # fig = plt.imshow(dist)
+    # plt.colorbar(fig)
+    # plt.title(f'Distance of dot product similarity, {seed}')
+    # plt.savefig(os.path.join(rdir, f'{tag}_dotsim_dist_{seed}.png'))
 
     del corrs
     del df
@@ -125,42 +125,57 @@ keep = np.array([labels[label] for label in included_labels['mid'].values])
 
 entropies = {}
 models = {}
-maxcorrs = {}
-mincorrs = {}
-metric = 'correlation'
+most = {}
+least = {}
+metric = 'distance'
 for seed in seeds:
     print(f"Calculating max/min {metric}s for seed {seed}")
     model = ProbabilisticGlove.load(os.path.join(rdir, f'{tag}_ProbabilisticGlove_{seed}.pt'))
-    cc = np.corrcoef(model.glove_layer.wi_mu.weight.detach()[keep].numpy())
-    #cc = np.abs(cc)
-    # replace values of 1 with inf or -inf so that we can sort easily
-    ccmax = cc.copy()
-    ccmax[np.isclose(cc, 1)] = -np.inf
+    if metric == 'correlation':
+        cc = np.corrcoef(model.glove_layer.wi_mu.weight.detach()[keep].numpy())
+        #cc = np.abs(cc)
+        # replace values of 1 with inf or -inf so that we can sort easily
+        mostlike = cc.copy()
+        mostlike[np.isclose(cc, 1)] = -np.inf
 
-    ccmin = cc.copy()
-    ccmin[np.isclose(cc, 1)] = np.inf
+        leastlike = cc.copy()
+        leastlike[np.isclose(cc, 1)] = np.inf
 
-    # topcorrs are the indexes of the highest correlations sorted by column
-    topcorrs = ccmax.argsort(axis=0)[-5:]
-    bottomcorrs = ccmin.argsort(axis=0)[:5]
+        # top are the indexes of the highest correlations sorted by column
+        top = mostlike.argsort(axis=0)[-5:][::-1]
+        bottom = leastlike.argsort(axis=0)[:5]
+    else:
+        assert metric == 'distance'
+        wt = model.glove_layer.wi_mu.weight.detach()[keep]
+        dist = torch.cdist(wt, wt).numpy()
+        # same as above, replace values of 0 with inf or -inf so we can sort
+        mostlike = dist.copy()
+        mostlike[np.isclose(dist, 0)] = np.inf
+        leastlike = dist.copy()
+        leastlike[np.isclose(dist, 0)] = -np.inf
+        # top are the indexes of the lowest distances sorted by column
+        top = mostlike.argsort(axis=0)[:5]
+        bottom = leastlike.argsort(axis=0)[-5:][::-1]
 
     # make into data structures
     maxes = pd.Series({
         included_labels['display_name'][i]:
-            pd.Series(index=included_labels['display_name'][topcorrs[::-1][:,i]].values, data=ccmax[i][topcorrs[::-1][:,i]])
-        for i in range(ccmax.shape[0])
+            pd.Series(index=included_labels['display_name'][top[:, i]].values,
+                      data=mostlike[i][top[:, i]])
+        for i in range(mostlike.shape[0])
     })
 
     mins = pd.Series({
         included_labels['display_name'][i]:
-            pd.Series(index=included_labels['display_name'][bottomcorrs[:,i]].values, data=ccmin[i][bottomcorrs[:,i]])
-        for i in range(ccmin.shape[0])
+            pd.Series(index=included_labels['display_name'][bottom[:, i]].values,
+                      data=leastlike[i][bottom[:, i]])
+        for i in range(leastlike.shape[0])
     })
 
-    maxcorrs[seed] = maxes
-    mincorrs[seed] = mins
+    most[seed] = maxes
+    least[seed] = mins
 
-# calculate entropy
+    # calculate entropy
     ent = model.glove_layer.entropy().detach()[keep]
     # sort it
     ents, indices = ent.sort()
@@ -168,16 +183,15 @@ for seed in seeds:
     entropies[seed] = pd.Series(
         data=ents.numpy().copy(), index=ordered_labels
     )
-    del cc
-    del ccmax
-    del ccmin
-    del topcorrs
-    del bottomcorrs
+    del mostlike
+    del leastlike
+    del top
+    del bottom
     del ent
     gc.collect()
 
-maxcorrs = pd.DataFrame(maxcorrs)
-mincorrs = pd.DataFrame(mincorrs)
+most = pd.DataFrame(most)
+least = pd.DataFrame(least)
 entropies = pd.Series(entropies)
 
 plt.figure()
@@ -187,8 +201,8 @@ plt.title(f'Entropies for {tag} per seed')
 plt.legend()
 plt.savefig(os.path.join(rdir, f'{tag}_entropies.png'))
 
-outfile['maxcorrs'] = maxcorrs
-outfile['mincorrs'] = mincorrs
+outfile[f'mostalike_{metric}'] = most
+outfile[f'leastalike_{metric}'] = least
 outfile['entropies'] = entropies
 
 # calculate correlations of counts with entropies, for each seed
