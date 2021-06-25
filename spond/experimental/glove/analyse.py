@@ -15,12 +15,12 @@ if socket.gethostname().endswith('pals.ucl.ac.uk'):
     # set up data path
     datapath = '/home/petra/data'
     gpu = True
-    tag = 'audioset'
-    labelsfn = os.path.join(datapath, tag, 'all_labels.csv')
-    train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence_audio_all.pt')
-    #tag = 'openimages'
-    #labelsfn = os.path.join(datapath, tag, 'oidv6-class-descriptions.csv')
-    #train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence.pt')
+    #tag = 'audioset'
+    #labelsfn = os.path.join(datapath, tag, 'all_labels.csv')
+    #train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence_audio_all.pt')
+    tag = 'openimages'
+    labelsfn = os.path.join(datapath, tag, 'oidv6-class-descriptions.csv')
+    train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence.pt')
     resultspath = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
         'results')
@@ -33,6 +33,8 @@ else:
     labelsfn = "/opt/github.com/spond/spond/experimental/audioset/all_labels.csv"
     resultspath = '/opt/github.com/spond/spond/experimental/glove/results/'
     train_cooccurrence_file = ''
+
+device = torch.device("cuda:0" if gpu else "cpu")
 
 sys.path.append(ppath)
 
@@ -90,10 +92,9 @@ for seed in seeds:
     # plt.colorbar(fig)
     # plt.title(f'Distance of dot product similarity, {seed}')
     # plt.savefig(os.path.join(rdir, f'{tag}_dotsim_dist_{seed}.png'))
-
+    # del fig
     del corrs
     del df
-    del fig
     gc.collect()
 
 
@@ -147,6 +148,7 @@ for seed in seeds:
     else:
         assert metric == 'distance'
         wt = model.glove_layer.wi_mu.weight.detach()[keep]
+        wt = wt.to(device)
         dist = torch.cdist(wt, wt).numpy()
         # same as above, replace values of 0 with inf or -inf so we can sort
         mostlike = dist.copy()
