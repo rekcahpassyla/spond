@@ -143,8 +143,10 @@ for seed in seeds:
         leastlike[np.isclose(cc, 1)] = np.inf
 
         # top are the indexes of the highest correlations sorted by column
-        top = mostlike.argsort(axis=0)[-5:][::-1]
-        bottom = leastlike.argsort(axis=0)[:5]
+        # do .copy() here because later in the loop we can then delete
+        # mostlike and leastlike, and free a lot of memory
+        top = mostlike.argsort(axis=0)[-5:][::-1].copy()
+        bottom = leastlike.argsort(axis=0)[:5].copy()
     else:
         assert metric == 'distance'
         wt = model.glove_layer.wi_mu.weight.detach()[keep]
@@ -156,8 +158,12 @@ for seed in seeds:
         leastlike = dist.copy()
         leastlike[np.isclose(dist, 0)] = -np.inf
         # top are the indexes of the lowest distances sorted by column
-        top = mostlike.argsort(axis=0)[:5]
-        bottom = leastlike.argsort(axis=0)[-5:][::-1]
+        # see note in the other branch about copy() and memory management
+        top = mostlike.argsort(axis=0)[:5].copy()
+        bottom = leastlike.argsort(axis=0)[-5:][::-1].copy()
+        del dist
+        torch.cuda.empty_cache()
+        gc.collect()
 
     # make into data structures
     maxes = pd.Series({
@@ -185,6 +191,7 @@ for seed in seeds:
     entropies[seed] = pd.Series(
         data=ents.numpy().copy(), index=ordered_labels
     )
+    # delete everything not needed so we can free memory for the next loop
     del mostlike
     del leastlike
     del top
