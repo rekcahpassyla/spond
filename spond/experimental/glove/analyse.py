@@ -201,8 +201,6 @@ for seed in seeds:
         data=ents.numpy().copy(), index=ordered_labels
     )
     # delete everything not needed so we can free memory for the next loop
-    del mostlike
-    del leastlike
     del top
     del bottom
     del ent
