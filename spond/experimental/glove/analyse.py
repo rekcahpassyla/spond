@@ -151,12 +151,15 @@ for seed in seeds:
         assert metric == 'distance'
         wt = model.glove_layer.wi_mu.weight.detach()[keep]
         wt = wt.to(device)
-        dist = torch.cdist(wt, wt).numpy()
+        # compute_mode="donot_use_mm_for_euclid_dist" is required or else
+        # the distance between something and itself is not 0
+        # don't know why.
+        dist = torch.cdist(wt, wt, compute_mode="donot_use_mm_for_euclid_dist").cpu().numpy()
         # same as above, replace values of 0 with inf or -inf so we can sort
         mostlike = dist.copy()
-        mostlike[np.isclose(dist, 0)] = np.inf
+        mostlike[torch.isclose(dist, 0)] = np.inf
         leastlike = dist.copy()
-        leastlike[np.isclose(dist, 0)] = -np.inf
+        leastlike[torch.isclose(dist, 0)] = -np.inf
         # top are the indexes of the lowest distances sorted by column
         # see note in the other branch about copy() and memory management
         top = mostlike.argsort(axis=0)[:5].copy()
