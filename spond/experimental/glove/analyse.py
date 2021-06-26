@@ -128,25 +128,44 @@ entropies = {}
 models = {}
 most = {}
 least = {}
-metric = 'distance'
+metric = 'correlation'
 for seed in seeds:
     print(f"Calculating max/min {metric}s for seed {seed}")
     model = ProbabilisticGlove.load(os.path.join(rdir, f'{tag}_ProbabilisticGlove_{seed}.pt'))
+    # the code in the branches below is intentionally duplicated sometimes,
+    # because we have to garbage collect to avoid big structures being
+    # retained in memory after they are not needed. 
     if metric == 'correlation':
         cc = np.corrcoef(model.glove_layer.wi_mu.weight.detach()[keep].numpy())
-        #cc = np.abs(cc)
         # replace values of 1 with inf or -inf so that we can sort easily
         mostlike = cc.copy()
         mostlike[np.isclose(cc, 1)] = -np.inf
-
-        leastlike = cc.copy()
-        leastlike[np.isclose(cc, 1)] = np.inf
-
         # top are the indexes of the highest correlations sorted by column
         # do .copy() here because later in the loop we can then delete
         # mostlike and leastlike, and free a lot of memory
         top = mostlike.argsort(axis=0)[-5:][::-1].copy()
+        maxes = pd.Series({
+            included_labels['display_name'][i]:
+                pd.Series(index=included_labels['display_name'][top[:, i]].values,
+                          data=mostlike[i][top[:, i]])
+            for i in range(mostlike.shape[0])
+        })
+        del mostlike
+        gc.collect()
+
         bottom = leastlike.argsort(axis=0)[:5].copy()
+        leastlike = cc.copy()
+        leastlike[np.isclose(cc, 1)] = np.inf
+
+        mins = pd.Series({
+            included_labels['display_name'][i]:
+                pd.Series(index=included_labels['display_name'][bottom[:, i]].values,
+                          data=leastlike[i][bottom[:, i]])
+            for i in range(mostlike.shape[0])
+        })
+        del leastlike
+        del cc
+        gc.collect()
     else:
         assert metric == 'distance'
         wt = model.glove_layer.wi_mu.weight.detach()[keep]
