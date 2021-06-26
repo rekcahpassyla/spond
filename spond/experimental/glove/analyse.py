@@ -154,16 +154,23 @@ for seed in seeds:
         # compute_mode="donot_use_mm_for_euclid_dist" is required or else
         # the distance between something and itself is not 0
         # don't know why.
-        dist = torch.cdist(wt, wt, compute_mode="donot_use_mm_for_euclid_dist").cpu().numpy()
+        dist = torch.cdist(wt, wt, compute_mode="donot_use_mm_for_euclid_dist")
         # same as above, replace values of 0 with inf or -inf so we can sort
-        mostlike = dist.copy()
-        mostlike[torch.isclose(dist, 0)] = np.inf
-        leastlike = dist.copy()
-        leastlike[torch.isclose(dist, 0)] = -np.inf
+        mostlike = dist.clone()
+        mostlike[torch.isclose(dist, torch.tensor([0.0]).to(device))] = np.inf
+        mostlike = mostlike.cpu().numpy()
+        top = mostlike.argsort(axis=0)[:5].copy()
+        del mostlike
+        torch.cuda.empty_cache()
+        gc.collect()
+
+        leastlike = dist.clone()
+        leastlike[torch.isclose(dist, torch.tensor([0.0]).to(device))] = -np.inf
         # top are the indexes of the lowest distances sorted by column
         # see note in the other branch about copy() and memory management
-        top = mostlike.argsort(axis=0)[:5].copy()
+        leastlike = leastlike.cpu().numpy()
         bottom = leastlike.argsort(axis=0)[-5:][::-1].copy()
+        del leastlike
         del dist
         torch.cuda.empty_cache()
         gc.collect()
