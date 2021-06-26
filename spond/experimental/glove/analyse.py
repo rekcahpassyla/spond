@@ -160,6 +160,14 @@ for seed in seeds:
         mostlike[torch.isclose(dist, torch.tensor([0.0]).to(device))] = np.inf
         mostlike = mostlike.cpu().numpy()
         top = mostlike.argsort(axis=0)[:5].copy()
+        # make into data structures
+        maxes = pd.Series({
+            included_labels['display_name'][i]:
+                pd.Series(index=included_labels['display_name'][top[:, i]].values,
+                          data=mostlike[i][top[:, i]])
+            for i in range(wt.shape[0])
+        })
+
         del mostlike
         torch.cuda.empty_cache()
         gc.collect()
@@ -170,25 +178,16 @@ for seed in seeds:
         # see note in the other branch about copy() and memory management
         leastlike = leastlike.cpu().numpy()
         bottom = leastlike.argsort(axis=0)[-5:][::-1].copy()
+        mins = pd.Series({
+            included_labels['display_name'][i]:
+                pd.Series(index=included_labels['display_name'][bottom[:, i]].values,
+                          data=leastlike[i][bottom[:, i]])
+            for i in range(wt.shape[0])
+        })
         del leastlike
         del dist
         torch.cuda.empty_cache()
         gc.collect()
-
-    # make into data structures
-    maxes = pd.Series({
-        included_labels['display_name'][i]:
-            pd.Series(index=included_labels['display_name'][top[:, i]].values,
-                      data=mostlike[i][top[:, i]])
-        for i in range(mostlike.shape[0])
-    })
-
-    mins = pd.Series({
-        included_labels['display_name'][i]:
-            pd.Series(index=included_labels['display_name'][bottom[:, i]].values,
-                      data=leastlike[i][bottom[:, i]])
-        for i in range(leastlike.shape[0])
-    })
 
     most[seed] = maxes
     least[seed] = mins
