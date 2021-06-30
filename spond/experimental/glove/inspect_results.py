@@ -6,8 +6,8 @@ import sys
 import socket
 if socket.gethostname().endswith('pals.ucl.ac.uk'):
     # set up data path
-    datapath = "/home/petra/spond/spond/experimental/glove/results"
-
+    resultspath = "/home/petra/spond/spond/experimental/glove/results"
+    datapath = "/home/petra/data"
 else:
     1/0
 
@@ -20,7 +20,7 @@ datafiles = {
     'audioset': {
         'all_labels':  os.path.join(datapath, 'audioset', 'all_labels.csv'),
         'included_labels': pd.read_csv(
-            os.path.join(datapath, 'openimages', 'class_labels_indices.csv'),
+            os.path.join('/home/petra/data', 'audioset', 'class_labels_indices.csv'),
             index_col=0
         )
     },
@@ -73,7 +73,7 @@ for tag in tags:
 
     
 stores = {
-    tag: pd.HDFStore(os.path.join(datapath, tag, "ProbabilisticGlove", f"{tag}_analytics.hdf5"), 'r')
+    tag: pd.HDFStore(os.path.join(resultspath, tag, "ProbabilisticGlove", f"{tag}_analytics.hdf5"), 'r')
     for tag in tags 
 }
 
