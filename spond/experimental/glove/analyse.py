@@ -17,10 +17,12 @@ if socket.gethostname().endswith('pals.ucl.ac.uk'):
     gpu = True
     #tag = 'audioset'
     #labelsfn = os.path.join(datapath, tag, 'all_labels.csv')
-    #train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence_audio_all.pt')
+    #train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence_audio_all.pt')÷
     tag = 'openimages'
     labelsfn = os.path.join(datapath, tag, 'oidv6-class-descriptions.csv')
     train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence.pt')
+    deterministic = torch.load(os.path.join(datapath, tag, f'glove_{tag}.pt'))
+
     resultspath = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
         'results')
@@ -73,6 +75,7 @@ else:
 
 
 for seed in seeds:
+    continue
     df = s[str(seed)]
     print(f"Calculating self-correlation for seed {seed}")
     corrs = np.corrcoef(df.values)
@@ -104,6 +107,7 @@ crosscorrs = {}
 
 for i, seed1 in enumerate(seeds):
     for seed2 in seeds[i+1:]:
+        continue
         print(f"Calculating cross-correlation for {seed1} x {seed2}")
         c1 = s[str(seed1)].values.ravel()
         c2 = s[str(seed2)].values.ravel()
@@ -121,6 +125,7 @@ outfile.flush()
 del crosscorrs
 gc.collect()
 
+
 keep = np.array([labels[label] for label in included_labels['mid'].values])
 
 
@@ -129,9 +134,11 @@ models = {}
 most = {}
 least = {}
 metric = 'correlation'
+corrmeans = {}
 for seed in seeds:
     print(f"Calculating max/min {metric}s for seed {seed}")
     model = ProbabilisticGlove.load(os.path.join(rdir, f'{tag}_ProbabilisticGlove_{seed}.pt'))
+    models[seed] = model
     # the code in the branches below is intentionally duplicated sometimes,
     # because we have to garbage collect to avoid big structures being
     # retained in memory after they are not needed. 
@@ -153,15 +160,15 @@ for seed in seeds:
         del mostlike
         gc.collect()
 
-        bottom = leastlike.argsort(axis=0)[:5].copy()
         leastlike = cc.copy()
         leastlike[np.isclose(cc, 1)] = np.inf
+        bottom = leastlike.argsort(axis=0)[:5].copy()
 
         mins = pd.Series({
             included_labels['display_name'][i]:
                 pd.Series(index=included_labels['display_name'][bottom[:, i]].values,
                           data=leastlike[i][bottom[:, i]])
-            for i in range(mostlike.shape[0])
+            for i in range(leastlike.shape[0])
         })
         del leastlike
         del cc
@@ -196,6 +203,7 @@ for seed in seeds:
         # top are the indexes of the lowest distances sorted by column
         # see note in the other branch about copy() and memory management
         leastlike = leastlike.cpu().numpy()
+
         bottom = leastlike.argsort(axis=0)[-5:][::-1].copy()
         mins = pd.Series({
             included_labels['display_name'][i]:
@@ -240,6 +248,7 @@ outfile[f'mostalike_{metric}'] = most
 outfile[f'leastalike_{metric}'] = least
 outfile['entropies'] = entropies
 
+
 # calculate correlations of counts with entropies, for each seed
 # entropies index are alphabetical, we have to match up with the counts
 
@@ -247,6 +256,20 @@ cooc = torch.load(train_cooccurrence_file)
 cooc = cooc.coalesce().to_dense()
 counts = cooc.sum(axis=0)[keep].numpy()
 counts = pd.Series(data=counts, index=[index_to_name[i] for i in keep])
+
+det_embeddings = deterministic['wi.weight'].data + deterministic['wj.weight'].data
+
+
+det_learnt_corr = pd.Series({
+    # calculate correlation between deterministic and learnt means
+    seed: np.corrcoef(
+        models[seed].glove_layer.wi_mu.weight.detach()[keep].numpy(),
+        det_embeddings.detach()[keep].numpy()
+    )[0][1]
+    for seed in seeds
+})
+
+outfile['det_learnt_corr'] = det_learnt_corr
 
 entropy_count_corr = pd.Series({
     seed: np.corrcoef(
