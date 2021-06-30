@@ -1,3 +1,4 @@
+import numpy as np
 import os
 import pandas as pd
 import sys
@@ -49,7 +50,7 @@ for tag in tags:
             'display_name': pd.Series(index_to_name)
         })
     
-    keep = np.array([labels[label] for label in datafiles['included_labels']['mid'].values])
+    keep = np.array([labels[label] for label in datafiles][tag]['included_labels']['mid'].values])
     # index of label in file to index in the output embedding
     lookup[tag]['label_to_index'] = labels
     lookup[tag]['name_to_index'] = name_to_index
