@@ -16,17 +16,17 @@ from spond.experimental.openimages.readfile import readlabels
 datafiles = {
     'openimages': {
         'all_labels':  os.path.join(datapath, 'openimages', 'oidv6-class-descriptions.csv'),
-        'included_labels': pd.read_csv(
-            os.path.join(datapath, 'openimages', 'class_labels_indices.csv'),
-            index_col=0
-        )
-    },
-    'audioset': {
-        'all_labels':  os.path.join(datapath, 'audioset', 'all_labels.csv'),
         'included_labels': pd.DataFrame({
             'mid': pd.Series(index_to_label),
             'display_name': pd.Series(index_to_name)
         })
+    },
+    'audioset': {
+        'all_labels':  os.path.join(datapath, 'audioset', 'all_labels.csv'),
+        'included_labels': pd.read_csv(
+            os.path.join(datapath, 'openimages', 'class_labels_indices.csv'),
+            index_col=0
+        )
     },
 }
 
@@ -60,8 +60,8 @@ for tag in tags:
 # now find the labels that are in both domains, and the indexes of those labels
 # in the embeddings. 
 union = [
-    item for item in lookup['audioset']['name_to_label'].keys()
-    if item in lookup['openimages']]['included_names']
+    item for item in lookup['audioset']['name_to_label'].keys()   
+    if item in lookup['openimages']['included_names']
 ]
 
 for tag in tags:
