@@ -16,10 +16,6 @@ from spond.experimental.openimages.readfile import readlabels
 datafiles = {
     'openimages': {
         'all_labels':  os.path.join(datapath, 'openimages', 'oidv6-class-descriptions.csv'),
-        'included_labels': pd.DataFrame({
-            'mid': pd.Series(index_to_label),
-            'display_name': pd.Series(index_to_name)
-        })
     },
     'audioset': {
         'all_labels':  os.path.join(datapath, 'audioset', 'all_labels.csv'),
@@ -47,6 +43,12 @@ for tag in tags:
     index_to_label = {v: k for k, v in labels.items()}
     index_to_name = {v: names[k] for k, v in labels.items()}
     name_to_index = {v: k for k, v in index_to_name.items()}
+    if tag == 'openimages':
+        datafiles['openimages']['included_labels']: pd.DataFrame({
+            'mid': pd.Series(index_to_label),
+            'display_name': pd.Series(index_to_name)
+        })
+    
     keep = np.array([labels[label] for label in datafiles['included_labels']['mid'].values])
     # index of label in file to index in the output embedding
     lookup[tag]['label_to_index'] = labels
