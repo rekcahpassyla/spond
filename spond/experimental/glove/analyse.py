@@ -6,6 +6,7 @@ from matplotlib import pyplot as plt
 import pandas as pd
 import torch
 from scipy.spatial.distance import cdist
+from scipy import stats
 
 
 import socket
@@ -17,7 +18,7 @@ if socket.gethostname().endswith('pals.ucl.ac.uk'):
     gpu = True
     #tag = 'audioset'
     #labelsfn = os.path.join(datapath, tag, 'all_labels.csv')
-    #train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence_audio_all.pt')÷
+    #train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence_audio_all.pt')
     tag = 'openimages'
     labelsfn = os.path.join(datapath, tag, 'oidv6-class-descriptions.csv')
     train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence.pt')
@@ -271,6 +272,7 @@ det_learnt_corr = pd.Series({
 
 outfile['det_learnt_corr'] = det_learnt_corr
 
+# Pearson correlation to check for linear relationship
 entropy_count_corr = pd.Series({
     seed: np.corrcoef(
         counts.sort_index().values,
@@ -279,6 +281,22 @@ entropy_count_corr = pd.Series({
 })
 
 outfile['entropy_count_corr'] = entropy_count_corr
+
+# Spearman correlation to check for monotonic relationship
+entropy_count_rcorr = {'spearmanr': {}, 'p': {}}
+
+for seed in seeds:
+    rc, p = stats.spearmanr(
+        counts.sort_index().values,
+        entropies[seed].sort_index().values
+    )
+    entropy_count_rcorr['spearmanr'][seed] = rc
+    entropy_count_rcorr['p'][seed] = p
+    
+entropy_count_rcorr = pd.DataFrame(entropy_count_rcorr)
+
+outfile['entropy_count_rcorr'] = entropy_count_rcorr
+
 
 outfile.close()
 

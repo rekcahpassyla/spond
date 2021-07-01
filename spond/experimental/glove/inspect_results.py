@@ -45,25 +45,26 @@ for tag in tags:
     index_to_name = {v: names[k] for k, v in labels.items()}
     name_to_index = {v: k for k, v in index_to_name.items()}
     if tag == 'openimages':
-        datafiles['openimages']['included_labels']: pd.DataFrame({
+        datafiles[tag]['included_labels'] = pd.DataFrame({
             'mid': pd.Series(index_to_label),
             'display_name': pd.Series(index_to_name)
         })
     
-    keep = np.array([labels[label] for label in datafiles][tag]['included_labels']['mid'].values])
+    keep = np.array([labels[label] for label in datafiles[tag]['included_labels']['mid'].values])
     # index of label in file to index in the output embedding
     lookup[tag]['label_to_index'] = labels
     lookup[tag]['name_to_index'] = name_to_index
+    lookup[tag]['name_to_label'] = name_to_label
     # the audioset embeddings are for all labels,
     # so use the 'keep' array to further filter only the ones we want. 
     # for openimages it has no effect
     lookup[tag]['included_index'] = keep
-    lookup[tag]['included_names'] = [lookup[tag][index_to_name][ind] for ind in keep]
+    lookup[tag]['included_names'] = [index_to_name[ind] for ind in keep]
 
 # now find the labels that are in both domains, and the indexes of those labels
 # in the embeddings. 
 union = [
-    item for item in lookup['audioset']['name_to_label'].keys()   
+    item for item in lookup['audioset']['included_names']
     if item in lookup['openimages']['included_names']
 ]
 
