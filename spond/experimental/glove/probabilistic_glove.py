@@ -479,7 +479,8 @@ if __name__ == '__main__':
         seeds = (1, 2, 3, 4, 5)
         for seed in seeds:
             # change to gpus=1 to use GPU. Otherwise CPU will be used
-            trainer = pl.Trainer(gpus=int(gpu), max_epochs=100, progress_bar_refresh_rate=20)
+            # needs to be higher for audioset. 
+            trainer = pl.Trainer(gpus=int(gpu), max_epochs=500, progress_bar_refresh_rate=20)
             # Trainer must be created before model, because we need to detect
             # what we requested for GPU.
             #tag = 'openimages'
@@ -487,7 +488,8 @@ if __name__ == '__main__':
             #co_occurrence = 'co_occurrence.pt'
             input_embeddings = 'glove_audio.pt'
             co_occurrence = 'co_occurrence_audio_all.pt'
-            model = ProbabilisticGlove(os.path.join(datapath, tag, input_embeddings), batch_size=100,
+            model = ProbabilisticGlove(os.path.join(datapath, tag, input_embeddings),
+                                       batch_size=100,
                                        seed=seed,
                                        train_cooccurrence_file=os.path.join(datapath, tag, co_occurrence))
 
@@ -505,33 +507,17 @@ if __name__ == '__main__':
             torch.cuda.empty_cache()
             gc.collect()
 
-        #labelsfn = os.path.join(datapath, tag, 'oidv6-class-descriptions.csv')
-        labelsfn = os.path.join(datapath, tag, "all_labels.csv")
+        if tag == 'openimages':
+            labelsfn = os.path.join(datapath, tag, 'oidv6-class-descriptions.csv')
+        else:
+            labelsfn = os.path.join(datapath, tag, 'class_labels.csv')
 
         labels, names = readlabels(labelsfn, rootdir=None)
-
-        # now we need to find the indexes of the audio labels in the all-labels file
-        if tag == 'audioset':
-            included_labels = pd.read_csv(
-                os.path.join(datapath, tag, "class_labels_indices.csv"),
-                index_col=0
-            )
-        else:
-            # if it's not audioset then just use the default
-            index_to_label = {v: k for k, v in labels.items()}
-            index_to_name = {v: names[k] for k, v in labels.items()}
-            included_labels = pd.DataFrame({
-                'mid': pd.Series(index_to_label),
-                'display_name': pd.Series(index_to_name)
-            })
-
-
-        keep = np.array([labels[label] for label in included_labels['mid'].values])
 
         dirname = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), 'results', tag)
         sim = Similarity(dirname, ProbabilisticGlove, seedvalues=(1, 2, 3, 4, 5), tag=tag)
-        sim.means(kernels.dot, os.path.join(dirname, f'{tag}_means_dot.hdf5'), mask=keep, mode='w')
+        sim.means(kernels.dot, os.path.join(dirname, f'{tag}_means_dot.hdf5'), mask=None, mode='w')
 
 
 

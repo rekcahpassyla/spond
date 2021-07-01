@@ -17,16 +17,14 @@ if socket.gethostname().endswith('pals.ucl.ac.uk'):
     datapath = '/home/petra/data'
     gpu = True
     #tag = 'audioset'
-    #labelsfn = os.path.join(datapath, tag, 'all_labels.csv')
+    #labelsfn = os.path.join(datapath, tag, 'class_labels.csv')
     #train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence_audio_all.pt')
     tag = 'openimages'
     labelsfn = os.path.join(datapath, tag, 'oidv6-class-descriptions.csv')
     train_cooccurrence_file = os.path.join(datapath, tag, 'co_occurrence.pt')
     deterministic = torch.load(os.path.join(datapath, tag, f'glove_{tag}.pt'))
 
-    resultspath = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        '../results')
+    resultspath = '/home/petra/spond/spond/experimental/glove/results'
 
 else:
     ppath = '/opt/github.com/spond/spond/experimental'
@@ -61,18 +59,10 @@ seeds = (1, 2, 3, 4, 5)
 
 N = 200
 
-if tag == 'audioset':
-    # now we need to find the indexes of the audio labels in the all-labels file
-    #included_labels = pd.read_csv("/opt/github.com/spond/spond/experimental/audioset/class_labels_indices.csv",
-    #                              index_col=0)
-    included_labels = pd.read_csv(
-        os.path.join(datapath, tag, 'class_labels_indices.csv'),
-        index_col=0)
-else:
-    included_labels = pd.DataFrame({
-        'mid': pd.Series(index_to_label),
-        'display_name': pd.Series(index_to_name)
-    })
+included_labels = pd.DataFrame({
+    'mid': pd.Series(index_to_label),
+    'display_name': pd.Series(index_to_name)
+})
 
 
 for seed in seeds:
@@ -107,8 +97,8 @@ for seed in seeds:
 crosscorrs = {}
 
 for i, seed1 in enumerate(seeds):
+    continue
     for seed2 in seeds[i+1:]:
-        continue
         print(f"Calculating cross-correlation for {seed1} x {seed2}")
         c1 = s[str(seed1)].values.ravel()
         c2 = s[str(seed2)].values.ravel()
@@ -127,14 +117,11 @@ del crosscorrs
 gc.collect()
 
 
-keep = np.array([labels[label] for label in included_labels['mid'].values])
-
-
 entropies = {}
 models = {}
 most = {}
 least = {}
-metric = 'correlation'
+metric = 'distance'
 corrmeans = {}
 for seed in seeds:
     print(f"Calculating max/min {metric}s for seed {seed}")
@@ -142,9 +129,9 @@ for seed in seeds:
     models[seed] = model
     # the code in the branches below is intentionally duplicated sometimes,
     # because we have to garbage collect to avoid big structures being
-    # retained in memory after they are not needed.
+    # retained in memory after they are not needed. 
     if metric == 'correlation':
-        cc = np.corrcoef(model.glove_layer.wi_mu.weight.detach()[keep].numpy())
+        cc = np.corrcoef(model.glove_layer.wi_mu.weight.detach().numpy())
         # replace values of 1 with inf or -inf so that we can sort easily
         mostlike = cc.copy()
         mostlike[np.isclose(cc, 1)] = -np.inf
@@ -176,7 +163,7 @@ for seed in seeds:
         gc.collect()
     else:
         assert metric == 'distance'
-        wt = model.glove_layer.wi_mu.weight.detach()[keep]
+        wt = model.glove_layer.wi_mu.weight.detach()
         wt = wt.to(device)
         # compute_mode="donot_use_mm_for_euclid_dist" is required or else
         # the distance between something and itself is not 0
@@ -221,7 +208,7 @@ for seed in seeds:
     least[seed] = mins
 
     # calculate entropy
-    ent = model.glove_layer.entropy().detach()[keep]
+    ent = model.glove_layer.entropy().detach()
     # sort it
     ents, indices = ent.sort()
     ordered_labels = [included_labels['display_name'][item] for item in indices.numpy()]
@@ -255,17 +242,19 @@ outfile['entropies'] = entropies
 
 cooc = torch.load(train_cooccurrence_file)
 cooc = cooc.coalesce().to_dense()
-counts = cooc.sum(axis=0)[keep].numpy()
-counts = pd.Series(data=counts, index=[index_to_name[i] for i in keep])
+counts = cooc.sum(axis=0).numpy()
+counts = pd.Series(data=counts)
 
 det_embeddings = deterministic['wi.weight'].data + deterministic['wj.weight'].data
+
+det_embeddings = det_embeddings.detach().cpu()
 
 
 det_learnt_corr = pd.Series({
     # calculate correlation between deterministic and learnt means
     seed: np.corrcoef(
-        models[seed].glove_layer.wi_mu.weight.detach()[keep].numpy(),
-        det_embeddings.detach()[keep].numpy()
+        models[seed].glove_layer.wi_mu.weight.detach().cpu().numpy(),
+        det_embeddings.numpy()
     )[0][1]
     for seed in seeds
 })
@@ -275,8 +264,8 @@ outfile['det_learnt_corr'] = det_learnt_corr
 # Pearson correlation to check for linear relationship
 entropy_count_corr = pd.Series({
     seed: np.corrcoef(
-        counts.sort_index().values,
-        entropies[seed].sort_index().values
+        counts.loc[[name_to_index[ind] for ind in entropies[seed].index]],
+        entropies[seed].values
     )[0][1] for seed in seeds
 })
 
@@ -287,12 +276,12 @@ entropy_count_rcorr = {'spearmanr': {}, 'p': {}}
 
 for seed in seeds:
     rc, p = stats.spearmanr(
-        counts.sort_index().values,
-        entropies[seed].sort_index().values
+        counts.loc[[name_to_index[ind] for ind in entropies[seed].index]],
+        entropies[seed].values
     )
     entropy_count_rcorr['spearmanr'][seed] = rc
     entropy_count_rcorr['p'][seed] = p
-
+    
 entropy_count_rcorr = pd.DataFrame(entropy_count_rcorr)
 
 outfile['entropy_count_rcorr'] = entropy_count_rcorr

@@ -14,16 +14,24 @@ else:
 
 from spond.experimental.openimages.readfile import readlabels
 
+all_labels_file = os.path.join(datapath, 'all_labels.csv')
+
+# labels = machine IDs to index
+# names = machine IDs to names
+all_labels, all_names = readlabels(all_labels_file, rootdir=None)
+
+name_to_label = {v: k for k, v in all_names.items()}
+index_to_label = {v: k for k, v in all_labels.items()}
+index_to_name = {v: all_names[k] for k, v in all_labels.items()}
+name_to_index = {v: k for k, v in index_to_name.items()}
+
+# each of the labels files is just a big list of 
 datafiles = {
     'openimages': {
-        'all_labels':  os.path.join(datapath, 'openimages', 'oidv6-class-descriptions.csv'),
+        'labels':  os.path.join(datapath, 'openimages', 'oidv6-class-descriptions.csv'),
     },
     'audioset': {
-        'all_labels':  os.path.join(datapath, 'audioset', 'all_labels.csv'),
-        'included_labels': pd.read_csv(
-            os.path.join('/home/petra/data', 'audioset', 'class_labels_indices.csv'),
-            index_col=0
-        )
+        'labels':  os.path.join(datapath, 'audioset', 'class_labels.csv'),
     },
 }
 
@@ -36,30 +44,19 @@ tags = ("openimages", "audioset")
 
 
 for tag in tags:
-    labelsfn = datafiles[tag]['all_labels']
-    # labels = machine IDs to index
-    # names = category name to index
-    labels, names = readlabels(labelsfn, rootdir=None)
-    name_to_label = {v: k for k, v in names.items()}
-    index_to_label = {v: k for k, v in labels.items()}
-    index_to_name = {v: names[k] for k, v in labels.items()}
-    name_to_index = {v: k for k, v in index_to_name.items()}
-    if tag == 'openimages':
-        datafiles[tag]['included_labels'] = pd.DataFrame({
-            'mid': pd.Series(index_to_label),
-            'display_name': pd.Series(index_to_name)
-        })
-    
-    keep = np.array([labels[label] for label in datafiles[tag]['included_labels']['mid'].values])
-    # index of label in file to index in the output embedding
-    lookup[tag]['label_to_index'] = labels
-    lookup[tag]['name_to_index'] = name_to_index
-    lookup[tag]['name_to_label'] = name_to_label
-    # the audioset embeddings are for all labels,
-    # so use the 'keep' array to further filter only the ones we want. 
-    # for openimages it has no effect
+    labelsfn = datafiles[tag]['labels']
+    included_labels = pd.read_csv(os.path.join(datapath, tag, labelsfn),
+                                  header=0)
+    datafiles[tag]['included_labels'] = included_labels
+    # for consistency. The openimages one has different titles
+    included_labels.columns = ['mid', 'display_name']
+    keep = np.array([all_labels[label] for label in included_labels['mid'].values])
     lookup[tag]['included_index'] = keep
     lookup[tag]['included_names'] = [index_to_name[ind] for ind in keep]
+    # we also need the index of the name in this domain
+    lookup[tag]['name_to_index'] = {
+        dd['display_name']: idx for idx, dd in included_labels.iterrows()
+    }
 
 # now find the labels that are in both domains, and the indexes of those labels
 # in the embeddings. 
