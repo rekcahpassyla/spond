@@ -464,39 +464,6 @@ class Similarity:
             store[str(seed)] = pd.DataFrame(thisvalue)
         store.close()
 
-    def variances(self):
-        # Load all the models, and calculate entropy
-
-        # kernel: callable that takes 2 arrays and returns similarity matrix
-        # Similarity will be calculated for each seed and stored in `outfile`
-
-        # kernel: callable that takes 2 arrays and returns pairwise matrix
-        # This function will sample nsamples occurrences of the weights
-        # for each of 2 models, and calculate nsamples of the similarity matrix
-        # then take the mean.
-        store = pd.HDFStore(outfile)
-        # internal import so we set the seed - does this work after other pyro imports?
-        import pyro
-        pyro.set_rng_seed(1)
-        for i, seed1 in enumerate(self.seedvalues):
-            for seed2 in self.seedvalues[i+1:]:
-                model1 = self._load(seed1)
-                model2 = self._load(seed2)
-                total = None
-                for i in range(nsamples):
-                    thisvalue = kernel(
-                        model1.glove_layer.weights().detach().numpy()[:100],
-                        model2.glove_layer.weights().detach().numpy()[:100]
-                    )
-                    if total is None:
-                        total = thisvalue
-                    else:
-                        total *= i-1
-                        total += thisvalue
-                        total /= i
-                store[f"{seed1}x{seed2}"] = pd.DataFrame(total)
-        store.close()
-
 if __name__ == '__main__':
     import os
     import kernels
