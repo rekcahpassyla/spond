@@ -13,7 +13,7 @@ import torch.nn.functional as F
 
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader, Dataset
-
+"""
 import socket
 if socket.gethostname().endswith('pals.ucl.ac.uk'):
     # set up pythonpath
@@ -27,7 +27,7 @@ else:
     gpu = False
 
 sys.path.append(ppath)
-
+"""
 
 from spond.experimental.glove.glove_layer import GloveEmbeddingsDataset
 
@@ -300,10 +300,14 @@ class ProbabilisticGloveLayer(nn.Embedding):
 
 class ProbabilisticGlove(pl.LightningModule):
 
+    # This class is meant to provide stochastic Glove embeddings.
+    # It is given a deterministically-generated embeddings file,
+    # as well as the file of cooccurrence data.
     def __init__(self, train_embeddings_file, batch_size, train_cooccurrence_file,
                  seed=None,
                  limit=None):
         # train_embeddings_file: the filename contaning the pre-trained weights
+        #                        from a determistic Glove run.
         # train_cooccurrence_file: the filename containing the co-occurrence statistics
         # that we want to match these embeddings to.
         super(ProbabilisticGlove, self).__init__()
@@ -479,7 +483,7 @@ if __name__ == '__main__':
         seeds = (1, 2, 3, 4, 5)
         for seed in seeds:
             # change to gpus=1 to use GPU. Otherwise CPU will be used
-            # needs to be higher for audioset. 
+            # needs to be higher for audioset.
             trainer = pl.Trainer(gpus=int(gpu), max_epochs=500, progress_bar_refresh_rate=20)
             # Trainer must be created before model, because we need to detect
             # what we requested for GPU.
