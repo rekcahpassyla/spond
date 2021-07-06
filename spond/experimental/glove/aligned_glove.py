@@ -21,10 +21,31 @@ import pytorch_lightning as pl
 from probabilistic_glove import ProbabilisticGloveLayer
 from glove_layer import GloveLayer
 from spond.models.mlp import MLP
+from spond.metrics.mapping_accuracy import mapping_accuracy
 from spond.experimental.openimages.readfile import readlabels
 
 # hidden layer size, somewhat arbitrarily choose 100
 HIDDEN = 100
+
+
+def torch_mapping_misclassified_1nn(f_x, y):
+    # equivalent of mapping_accuracy but implemented in torch,
+    # and only for 1nn. Returns the misclassification rather than accuracy
+    # because we want to pass this to the optimiser for minimisation.
+    # again, weird compute mode is needed because without it,
+    # distance from an item to itself is not 0.
+    dist = torch.cdist(f_x, y, compute_mode="donot_use_mm_for_euclid_dist")
+    values, inds = dist.sort(dim=0)
+    # None of the following backpropagate in torch
+    # probably because there are no gradients defined
+    # we need to work out how to define something that has a gradient
+    #nn_indices = inds[0]
+    #nconcepts = f_x.size()[0]
+    #mismatches = torch.arange(nconcepts) != nn_indices
+    #loss = mismatches.float().mean()
+    #return loss
+    loss = values[0].mean()
+    return loss
 
 
 class AlignedGloveLayer(nn.Module):
@@ -87,9 +108,6 @@ class AlignedGloveLayer(nn.Module):
         self.losses = []
         self.losses += self.x_emb.loss(x_inds)
         self.losses += self.y_emb.loss(y_inds)
-        loss = 0
-        #loss += self.losses[0]
-        #loss += self.losses[1]
         # For concepts that exist in both domains:
         # First we have to find the concepts in this index
         # that exist in both domains, by comparing with self.index_map
@@ -125,14 +143,24 @@ class AlignedGloveLayer(nn.Module):
         # TODO: add these other losses later.
         # 4. 1 if nearest neighbour of f(x) is not the known y mapping,
         #    0 otherwise
+        # TODO: try to convert to torch, because this will be slow
+        fx_mismatch = torch_mapping_misclassified_1nn(
+            fx_output,
+            self.y_emb.weight[y_check]
+        )
         # 5. 1 if nearest neighbour of g(y) is not the known x mapping,
         #    0 otherwise
+        gy_mismatch = torch_mapping_misclassified_1nn(
+            gy_output,
+            self.x_emb.weight[x_check]
+        )
+        self.losses.append(fx_mismatch)
+        self.losses.append(gy_mismatch)
         print(f"losses: {self.losses}")
-        # The following line is what prevents learning from happening
-        # even in the case of one embedding learning only.
-        #return torch.tensor(self.losses, requires_grad=True)
-        #loss += self.losses[2]
-        #loss += self.losses[3]
+        # Losses must be summed like below, or learning doesn't happen
+        # cannot convert to a tensor containing self.losses,
+        # even if requires_grad is set, learning does not happen
+        # something wrong with the backpropagation.
         loss = sum(self.losses)
         return loss
 
@@ -325,7 +353,7 @@ class GloveDualDataset(Dataset):
 
 if __name__ == '__main__':
     seed = 1
-    trainer = pl.Trainer(gpus=0, max_epochs=200, progress_bar_refresh_rate=20)
+    trainer = pl.Trainer(gpus=0, max_epochs=2000, progress_bar_refresh_rate=20)
     batch_size = 100
     # train audioset against itself
     cooc_file = "/opt/github.com/spond/spond/experimental/audioset/co_occurrence_audio_all.pt"
