@@ -37,7 +37,7 @@ class AlignedGloveLayer(nn.Module):
                  index_map,              # list of pairs that map a concept in x
                                          # to a concept in y
                  seed=None,
-                 probabilistic=True     # If set, use ProbabilisticGloveLayer
+                 probabilistic=False     # If set, use ProbabilisticGloveLayer
                  ):
         super(AlignedGloveLayer, self).__init__()
         self.seed = seed
@@ -88,8 +88,8 @@ class AlignedGloveLayer(nn.Module):
         self.losses += self.x_emb.loss(x_inds)
         self.losses += self.y_emb.loss(y_inds)
         loss = 0
-        loss += self.losses[0]
-        loss += self.losses[1]
+        #loss += self.losses[0]
+        #loss += self.losses[1]
         # For concepts that exist in both domains:
         # First we have to find the concepts in this index
         # that exist in both domains, by comparing with self.index_map
@@ -107,17 +107,20 @@ class AlignedGloveLayer(nn.Module):
         # 2. distance between fx and y_embedding
         fx_input = self.x_emb.weight[x_present]
         fx_output = self.fx(fx_input)
-        fx_expected_output = self.y_emb.weight[y_check]
-        fx_diff = fx_output - fx_expected_output
+        x_rt = self.gy(fx_output)
+        fx_diff = x_rt - fx_input
         fx_loss = torch.sqrt(torch.einsum('ij,ij->i', fx_diff, fx_diff))
         # must be mean because the batch size may differ
         self.losses.append(fx_loss.mean())
         # 3. distance between gy and x_embedding
         gy_input = self.y_emb.weight[y_present]
         gy_output = self.gy(gy_input)
-        gy_expected_output = self.x_emb.weight[x_check]
-        gy_diff = gy_output - gy_expected_output
+        y_rt = self.fx(gy_output)
+        gy_diff = y_rt - gy_input
         gy_loss = torch.sqrt(torch.einsum('ij,ij->i', gy_diff, gy_diff))
+        #gy_expected_output = self.x_emb.weight[x_check]
+        #gy_diff = gy_output - gy_expected_output
+        #gy_loss = torch.sqrt(torch.einsum('ij,ij->i', gy_diff, gy_diff))
         self.losses.append(gy_loss.mean())
         # TODO: add these other losses later.
         # 4. 1 if nearest neighbour of f(x) is not the known y mapping,
@@ -128,8 +131,9 @@ class AlignedGloveLayer(nn.Module):
         # The following line is what prevents learning from happening
         # even in the case of one embedding learning only.
         #return torch.tensor(self.losses, requires_grad=True)
-        loss += self.losses[2]
-        loss += self.losses[3]
+        #loss += self.losses[2]
+        #loss += self.losses[3]
+        loss = sum(self.losses)
         return loss
 
 
