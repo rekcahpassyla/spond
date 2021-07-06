@@ -19,6 +19,7 @@ import pytorch_lightning as pl
 
 
 from probabilistic_glove import ProbabilisticGloveLayer
+from glove_layer import GloveLayer
 from spond.models.mlp import MLP
 from spond.experimental.openimages.readfile import readlabels
 
@@ -35,16 +36,17 @@ class AlignedGloveLayer(nn.Module):
                  y_embedding_dim,       # dimension of y
                  index_map,              # list of pairs that map a concept in x
                                          # to a concept in y
-                 seed=None
+                 seed=None,
+                 probabilistic=False     # If set, use ProbabilisticGloveLayer
                  ):
         super(AlignedGloveLayer, self).__init__()
         self.seed = seed
+        self.probabilistic = probabilistic
         x_nconcepts = x_cooc.size()[0]
         y_nconcepts = y_cooc.size()[0]
-        self.x_emb = ProbabilisticGloveLayer(x_nconcepts, x_embedding_dim,
-                                             x_cooc)
-        self.y_emb = ProbabilisticGloveLayer(y_nconcepts, y_embedding_dim,
-                                             y_cooc)
+        cls = ProbabilisticGloveLayer if probabilistic else GloveLayer
+        self.x_emb = cls(x_nconcepts, x_embedding_dim, x_cooc)
+        self.y_emb = cls(y_nconcepts, y_embedding_dim, y_cooc)
         # dictionary of x to y
         self.index_map = dict(index_map)
         # This is stored just for speed
@@ -60,8 +62,9 @@ class AlignedGloveLayer(nn.Module):
     def _init_samples(self):
         # TODO: not sure how this will work with different dataset sizes
         # for x and y.
-        self.x_emb._init_samples()
-        self.y_emb._init_samples()
+        if self.probabilistic:
+            self.x_emb._init_samples()
+            self.y_emb._init_samples()
 
     def _set_device(self, device):
         self.device = device
@@ -74,7 +77,6 @@ class AlignedGloveLayer(nn.Module):
     def loss(self, x_inds, y_inds):
         # x_inds and y_inds are sequences of the x and y indices that form
         # this minibatch.
-        self.losses = []
         # The loss contains the following items:
         # For all concepts:
         # 1. Glove loss for both x and y embeddings
@@ -82,8 +84,12 @@ class AlignedGloveLayer(nn.Module):
         # There is no MSE loss here like there is in GloveLayer and
         # ProbabilisticGlove, because this is now no longer supervised.
         # We are not trying to train to match deterministic embeddings.
+        self.losses = []
         self.losses += self.x_emb.loss(x_inds)
         self.losses += self.y_emb.loss(y_inds)
+        loss = 0
+        loss += self.losses[0]
+        loss += self.losses[1]
         # For concepts that exist in both domains:
         # First we have to find the concepts in this index
         # that exist in both domains, by comparing with self.index_map
@@ -91,6 +97,7 @@ class AlignedGloveLayer(nn.Module):
         # This code relies heavily on the fact that the index_map and
         # rev_index_map are small, and therefore using numpy operations
         # is fast.
+        """
         x_present = list(set(self.index_map.keys()).intersection(set(x_inds.tolist())))
         # we also need the y values that x_present mapped to
         y_check = [self.index_map[k] for k in x_present]
@@ -117,7 +124,11 @@ class AlignedGloveLayer(nn.Module):
         #    0 otherwise
         # 5. 1 if nearest neighbour of g(y) is not the known x mapping,
         #    0 otherwise
-        return torch.tensor(self.losses, requires_grad=True)
+        """
+        # The following line is what prevents learning from happening
+        # even in the case of one embedding learning only.
+        #return torch.tensor(self.losses, requires_grad=True)
+        return loss
 
 
 class AlignedGlove(pl.LightningModule):
@@ -235,12 +246,16 @@ class AlignedGlove(pl.LightningModule):
         y_ind = xy_indices[:, 1]
         # forward step
         losses = self.forward((x_ind, y_ind))
+        #loss = torch.sum(losses)
+        #print(f"loss: {loss}")
+        #return loss
+        print(f"losses: {losses}")
         loss = torch.sum(losses)
-        print(f"loss: {loss}")
         return loss
 
     def configure_optimizers(self):
-        opt = optim.Adam(self.parameters(), lr=1)
+        opt = optim.Adam(self.parameters(), lr=0.005)
+        #opt = optim.Adagrad(self.parameters(), lr=0.05)
         return opt
 
     def train_dataloader(self):
@@ -304,8 +319,8 @@ class GloveDualDataset(Dataset):
 
 if __name__ == '__main__':
     seed = 1
-    trainer = pl.Trainer(gpus=0, max_epochs=500, progress_bar_refresh_rate=20)
-    batch_size = 600
+    trainer = pl.Trainer(gpus=0, max_epochs=1000, progress_bar_refresh_rate=20)
+    batch_size = 100
     # train audioset against itself
     cooc_file = "/opt/github.com/spond/spond/experimental/audioset/co_occurrence_audio_all.pt"
     labels_file = "/opt/github.com/spond/spond/experimental/audioset/class_labels.csv"
