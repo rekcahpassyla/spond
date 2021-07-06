@@ -37,7 +37,7 @@ class AlignedGloveLayer(nn.Module):
                  index_map,              # list of pairs that map a concept in x
                                          # to a concept in y
                  seed=None,
-                 probabilistic=False     # If set, use ProbabilisticGloveLayer
+                 probabilistic=True     # If set, use ProbabilisticGloveLayer
                  ):
         super(AlignedGloveLayer, self).__init__()
         self.seed = seed
@@ -97,7 +97,7 @@ class AlignedGloveLayer(nn.Module):
         # This code relies heavily on the fact that the index_map and
         # rev_index_map are small, and therefore using numpy operations
         # is fast.
-        """
+
         x_present = list(set(self.index_map.keys()).intersection(set(x_inds.tolist())))
         # we also need the y values that x_present mapped to
         y_check = [self.index_map[k] for k in x_present]
@@ -124,10 +124,12 @@ class AlignedGloveLayer(nn.Module):
         #    0 otherwise
         # 5. 1 if nearest neighbour of g(y) is not the known x mapping,
         #    0 otherwise
-        """
+        print(f"losses: {self.losses}")
         # The following line is what prevents learning from happening
         # even in the case of one embedding learning only.
         #return torch.tensor(self.losses, requires_grad=True)
+        loss += self.losses[2]
+        loss += self.losses[3]
         return loss
 
 
@@ -319,7 +321,7 @@ class GloveDualDataset(Dataset):
 
 if __name__ == '__main__':
     seed = 1
-    trainer = pl.Trainer(gpus=0, max_epochs=1000, progress_bar_refresh_rate=20)
+    trainer = pl.Trainer(gpus=0, max_epochs=200, progress_bar_refresh_rate=20)
     batch_size = 100
     # train audioset against itself
     cooc_file = "/opt/github.com/spond/spond/experimental/audioset/co_occurrence_audio_all.pt"
