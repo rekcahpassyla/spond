@@ -153,6 +153,10 @@ class ProbabilisticGloveLayer(nn.Embedding):
         self.coo_dense = self.coo_dense.to(device)
         self.allpairs = self.allpairs.to(device)
 
+    @property
+    def weight(self):
+        return self.weights()
+
     def weights(self, n=1):
         # we are taking one sample from each embedding distribution
         if n == 1:
