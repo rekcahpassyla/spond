@@ -35,16 +35,28 @@ def torch_mapping_misclassified_1nn(f_x, y):
     # again, weird compute mode is needed because without it,
     # distance from an item to itself is not 0.
     dist = torch.cdist(f_x, y, compute_mode="donot_use_mm_for_euclid_dist")
-    values, inds = dist.sort(dim=0)
+    #dist2 = torch.norm(f_x - y, p=2, dim=1)
+    #values, inds = dist.sort(dim=0)
+    values, nn_inds = dist.topk(1, dim=1, largest=False)
     # None of the following backpropagate in torch
     # probably because there are no gradients defined
     # we need to work out how to define something that has a gradient
-    #nn_indices = inds[0]
-    #nconcepts = f_x.size()[0]
-    #mismatches = torch.arange(nconcepts) != nn_indices
+    nconcepts = f_x.size()[0]
+    mismatches = torch.arange(nconcepts) != nn_inds.squeeze()
+    # we need to do something sneaky to count the mismatches.
+    # If we just sum the mismatches, there is no backpropagation.
+    #dummy_fx = f_x[mismatches].sum(axis=1)
+    #dummy_y = y[mismatches].sum(axis=1)
+    # Therefore, we have to do something to force the f_x and y to be
+    # involved in the calculation
+    #count = sum(dummy_fx/dummy_fx + dummy_y/dummy_y)
+    #count /= 2
+    included = values.squeeze()[mismatches]
+    count = included/included
+    loss = count.sum() / nconcepts
     #loss = mismatches.float().mean()
     #return loss
-    loss = values[0].mean()
+    #loss = values[0].mean()
     return loss
 
 
@@ -353,7 +365,7 @@ class GloveDualDataset(Dataset):
 
 if __name__ == '__main__':
     seed = 1
-    trainer = pl.Trainer(gpus=0, max_epochs=2000, progress_bar_refresh_rate=20)
+    trainer = pl.Trainer(gpus=0, max_epochs=500, progress_bar_refresh_rate=20)
     batch_size = 100
     # train audioset against itself
     cooc_file = "/opt/github.com/spond/spond/experimental/audioset/co_occurrence_audio_all.pt"
