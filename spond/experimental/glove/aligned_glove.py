@@ -74,12 +74,19 @@ class AlignedGloveLayer(nn.Module):
                  ):
         super(AlignedGloveLayer, self).__init__()
         self.seed = seed
+
         self.probabilistic = probabilistic
         x_nconcepts = x_cooc.size()[0]
         y_nconcepts = y_cooc.size()[0]
+        kws = {}
+        if seed is not None:
+            if probabilistic:
+                kws['seed'] = seed
+            torch.manual_seed(seed)
+
         cls = ProbabilisticGloveLayer if probabilistic else GloveLayer
-        self.x_emb = cls(x_nconcepts, x_embedding_dim, x_cooc)
-        self.y_emb = cls(y_nconcepts, y_embedding_dim, y_cooc)
+        self.x_emb = cls(x_nconcepts, x_embedding_dim, x_cooc, **kws)
+        self.y_emb = cls(y_nconcepts, y_embedding_dim, y_cooc, **kws)
         # dictionary of x to y
         self.index_map = dict(index_map)
         # This is stored just for speed
@@ -141,7 +148,7 @@ class AlignedGloveLayer(nn.Module):
         fx_diff = x_rt - fx_input
         fx_loss = torch.sqrt(torch.einsum('ij,ij->i', fx_diff, fx_diff))
         # must be mean because the batch size may differ
-        self.losses.append(fx_loss.mean())
+        #self.losses.append(fx_loss.mean())
         # 3. distance between gy and x_embedding
         gy_input = self.y_emb.weight[y_present]
         gy_output = self.gy(gy_input)
@@ -151,7 +158,7 @@ class AlignedGloveLayer(nn.Module):
         #gy_expected_output = self.x_emb.weight[x_check]
         #gy_diff = gy_output - gy_expected_output
         #gy_loss = torch.sqrt(torch.einsum('ij,ij->i', gy_diff, gy_diff))
-        self.losses.append(gy_loss.mean())
+        #self.losses.append(gy_loss.mean())
         # TODO: add these other losses later.
         # 4. 1 if nearest neighbour of f(x) is not the known y mapping,
         #    0 otherwise
@@ -365,7 +372,7 @@ class GloveDualDataset(Dataset):
 
 if __name__ == '__main__':
     seed = 1
-    trainer = pl.Trainer(gpus=0, max_epochs=500, progress_bar_refresh_rate=20)
+    trainer = pl.Trainer(gpus=0, max_epochs=1500, progress_bar_refresh_rate=20)
     batch_size = 100
     # train audioset against itself
     cooc_file = "/opt/github.com/spond/spond/experimental/audioset/co_occurrence_audio_all.pt"
