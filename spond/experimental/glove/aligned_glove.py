@@ -51,7 +51,10 @@ def torch_mapping_misclassified_1nn(f_x, y):
     # involved in the calculation
     #count = sum(dummy_fx/dummy_fx + dummy_y/dummy_y)
     #count /= 2
-    included = values.squeeze()[mismatches]
+    try:
+        included = values.squeeze(dim=0)[mismatches]
+    except:
+        raise
     count = included/included
     loss = count.sum() / nconcepts
     #loss = mismatches.float().mean()
@@ -70,7 +73,9 @@ class AlignedGloveLayer(nn.Module):
                  index_map,              # list of pairs that map a concept in x
                                          # to a concept in y
                  seed=None,
-                 probabilistic=False     # If set, use ProbabilisticGloveLayer
+                 probabilistic=False,     # If set, use ProbabilisticGloveLayer
+                 x_limit=None,
+                 y_limit=None
                  ):
         super(AlignedGloveLayer, self).__init__()
         self.seed = seed
@@ -134,47 +139,44 @@ class AlignedGloveLayer(nn.Module):
         # This code relies heavily on the fact that the index_map and
         # rev_index_map are small, and therefore using numpy operations
         # is fast.
-
         x_present = list(set(self.index_map.keys()).intersection(set(x_inds.tolist())))
-        # we also need the y values that x_present mapped to
-        y_check = [self.index_map[k] for k in x_present]
+        # only do stuff if there are any shared items present in the x domain
+        if len(x_present):
+            # we also need the y values that x_present mapped to
+            y_check = [self.index_map[k] for k in x_present]
+            # 2. distance between fx and y_embedding
+            fx_input = self.x_emb.weight[x_present]
+            fx_output = self.fx(fx_input)
+            x_rt = self.gy(fx_output)
+            fx_diff = x_rt - fx_input
+            fx_loss = torch.sqrt(torch.einsum('ij,ij->i', fx_diff, fx_diff))
+            # 4. 1 if nearest neighbour of f(x) is not the known y mapping,
+            #    0 otherwise
+            fx_mismatch = torch_mapping_misclassified_1nn(
+                fx_output,
+                self.y_emb.weight[y_check]
+            )
+            self.losses.append(fx_mismatch)
         y_present = list(set(self.rev_index_map.keys()).intersection(
             set(y_inds.tolist())))
-        x_check = [self.rev_index_map[k] for k in y_present]
-        # 2. distance between fx and y_embedding
-        fx_input = self.x_emb.weight[x_present]
-        fx_output = self.fx(fx_input)
-        x_rt = self.gy(fx_output)
-        fx_diff = x_rt - fx_input
-        fx_loss = torch.sqrt(torch.einsum('ij,ij->i', fx_diff, fx_diff))
-        # must be mean because the batch size may differ
-        #self.losses.append(fx_loss.mean())
-        # 3. distance between gy and x_embedding
-        gy_input = self.y_emb.weight[y_present]
-        gy_output = self.gy(gy_input)
-        y_rt = self.fx(gy_output)
-        gy_diff = y_rt - gy_input
-        gy_loss = torch.sqrt(torch.einsum('ij,ij->i', gy_diff, gy_diff))
-        #gy_expected_output = self.x_emb.weight[x_check]
-        #gy_diff = gy_output - gy_expected_output
-        #gy_loss = torch.sqrt(torch.einsum('ij,ij->i', gy_diff, gy_diff))
-        #self.losses.append(gy_loss.mean())
-        # TODO: add these other losses later.
-        # 4. 1 if nearest neighbour of f(x) is not the known y mapping,
-        #    0 otherwise
-        # TODO: try to convert to torch, because this will be slow
-        fx_mismatch = torch_mapping_misclassified_1nn(
-            fx_output,
-            self.y_emb.weight[y_check]
-        )
-        # 5. 1 if nearest neighbour of g(y) is not the known x mapping,
-        #    0 otherwise
-        gy_mismatch = torch_mapping_misclassified_1nn(
-            gy_output,
-            self.x_emb.weight[x_check]
-        )
-        self.losses.append(fx_mismatch)
-        self.losses.append(gy_mismatch)
+        if len(y_present):
+            x_check = [self.rev_index_map[k] for k in y_present]
+            # 3. distance between gy and x_embedding
+            gy_input = self.y_emb.weight[y_present]
+            gy_output = self.gy(gy_input)
+            y_rt = self.fx(gy_output)
+            gy_diff = y_rt - gy_input
+            gy_loss = torch.sqrt(torch.einsum('ij,ij->i', gy_diff, gy_diff))
+            # 5. 1 if nearest neighbour of g(y) is not the known x mapping,
+            #    0 otherwise
+            try:
+                gy_mismatch = torch_mapping_misclassified_1nn(
+                    gy_output,
+                    self.x_emb.weight[x_check]
+                )
+            except:
+                raise
+            self.losses.append(gy_mismatch)
         print(f"losses: {self.losses}")
         # Losses must be summed like below, or learning doesn't happen
         # cannot convert to a tensor containing self.losses,
@@ -199,75 +201,25 @@ class AlignedGlove(pl.LightningModule):
     # index of "Bird" in audioset).
     def __init__(self,
                  batch_size,
+                 data,  # DataDict class
                  # all files must be full paths
-                 x_cooc_file,      # co-occurrence file for x
                  x_embedding_dim,  # dimension of x
-                 x_labels_file,    # file containing all x labels to names
-                 y_cooc_file,      # co-occurrence file for y
                  y_embedding_dim,  # dimension of y
-                 y_labels_file,    # file containg all y labels to names
-                 all_labels_file,        # file containing all labels to names
                  seed=None,
                  ):
         super(AlignedGlove, self).__init__()
         self.batch_size = batch_size
         self.seed = seed
-        self.x_cooc_file = x_cooc_file
-        self.x_cooc = torch.load(x_cooc_file)
+        self.data = data
         self.x_embedding_dim = x_embedding_dim
-        self.x_labels_file = x_labels_file
-        self.y_cooc_file = y_cooc_file
-        self.y_cooc = torch.load(y_cooc_file)
         self.y_embedding_dim = y_embedding_dim
-        self.y_labels_file = y_labels_file
-        self.all_labels_file = all_labels_file
-
-        # labels = machine IDs to index
-        # names = machine IDs to names
-        all_labels, all_names = readlabels(all_labels_file, rootdir=None)
-
-        name_to_label = {v: k for k, v in all_names.items()}
-        index_to_label = {v: k for k, v in all_labels.items()}
-        index_to_name = {v: all_names[k] for k, v in all_labels.items()}
-        name_to_index = {v: k for k, v in index_to_name.items()}
-
-        # x_labels is dictionary of label to index
-        # x_names is dictionary of label to name
-        x_labels, x_names = readlabels(self.x_labels_file, rootdir=None)
-        # same applies to y_labels and y_names
-        y_labels, y_names = readlabels(self.y_labels_file, rootdir=None)
-        y_name_to_label = {v: k for k, v in y_names.items()}
-        # the number of labels/names corresponds to the dimension of the
-        # co-occurrence matrix, and represents the number of concepts.
-        # Now we have to find the indices of the union of concepts
-        # in the x and y domains.
-        # First find the union
-        # TODO: these currently contain redundant information,
-        # but clean them up later when we know better how they are used
-        union = {}
-        for x_label, x_name in x_names.items():
-            if x_label in y_names:
-                union[x_name] = (x_labels[x_label], y_labels[y_name_to_label[x_name]])
-        self.union_names = union
-        # Tuple of (index in all, index in x, index in y)
-        # TODO: ugh, too many levels of indirection, clean up later.
-        self.union_indexes = torch.tensor([
-            (
-                name_to_index[name],
-                x_labels[name_to_label[name]],
-                y_labels[name_to_label[name]],
-            )
-            for name in union
-        ])
-
-        index_map = list(self.union_names.values())
 
         self.aligner = AlignedGloveLayer(
-            self.x_cooc,
+            self.data.x_cooc,
             self.x_embedding_dim,
-            self.y_cooc,
+            self.data.y_cooc,
             self.y_embedding_dim,
-            index_map,
+            self.data.index_map,
             seed=seed
         )
 
@@ -312,7 +264,7 @@ class AlignedGlove(pl.LightningModule):
         return opt
 
     def train_dataloader(self):
-        dataset = GloveDualDataset(self.x_cooc.size()[0], self.y_cooc.size()[0])
+        dataset = GloveDualDataset(self.data.x_cooc.size()[0], self.data.y_cooc.size()[0])
         return DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
 
 
@@ -370,23 +322,103 @@ class GloveDualDataset(Dataset):
         return x, y
 
 
+class DataDictionary:
+    # This class takes the co-occurrence matrices and labels files
+    # and does some sanity checks, as well as storing various useful things.
+
+    def __init__(self,
+                 x_cooc,      # co-occurrence matrix for x
+                 x_labels_file,    # full filepath or handle containing all x labels to names
+                 y_cooc,      # co-occurrence matrix for y
+                 y_labels_file,    # full filepath or handle containing all y labels to names
+                 all_labels_file,        # full filepath or handle containing all labels to names
+                 ):
+
+        x_nconcepts = x_cooc.size()[0]
+        y_nconcepts = y_cooc.size()[0]
+
+        self.x_cooc = x_cooc
+        self.y_cooc = y_cooc
+        all_labels, all_names = readlabels(all_labels_file, rootdir=None)
+        name_to_label = {v: k for k, v in all_names.items()}
+        index_to_label = {v: k for k, v in all_labels.items()}
+        index_to_name = {v: all_names[k] for k, v in all_labels.items()}
+        name_to_index = {v: k for k, v in index_to_name.items()}
+
+        # x_labels is dictionary of label to index
+        # x_names is dictionary of label to name
+        x_labels, x_names = readlabels(x_labels_file, rootdir=None)
+        assert len(x_labels) == x_nconcepts, (
+            f"x co-occurrence does not contain the same number of concepts as the labels file: "
+            f"\nExpected {x_nconcepts} but got {len(x_labels)}"
+        )
+        # same applies to y_labels and y_names
+        y_labels, y_names = readlabels(y_labels_file, rootdir=None)
+        assert len(y_labels) == y_nconcepts, (
+            f"y co-occurrence does not contain the same number of concepts as the labels file: "
+            f"\nExpected {y_nconcepts} but got {len(y_labels)}"
+        )
+
+        y_name_to_label = {v: k for k, v in y_names.items()}
+        union = {}
+        for x_label, x_name in x_names.items():
+            if x_label in y_names:
+                union[x_name] = (x_labels[x_label], y_labels[y_name_to_label[x_name]])
+        self.union_names = union
+        # Tuple of (index in all, index in x, index in y)
+        # TODO: ugh, too many levels of indirection, clean up later.
+        index_map = list(self.union_names.values())
+        x_indexes = torch.tensor([all_labels[label] for label in x_labels])
+        y_indexes = torch.tensor([all_labels[label] for label in y_labels])
+
+        # universe: keys = labels, values = index into universe
+        self.all_labels = all_labels
+        # universe: keys = labels, values = names
+        self.all_names = all_names
+
+        # indexes of x concepts in the universe
+        self.x_indexes = x_indexes
+        # indexes of y concepts in the universe
+        self.y_indexes = y_indexes
+
+        # given an index in the universe, stores the mapping from
+        # index into universe to index in x and y files
+        # eg.  if universe index 5 is Cat and x index 0 is Cat and
+        # y index 77 is Cat then
+        # self.union_indexes contains
+        #  (5, 0, 77)
+        self.union_indexes = torch.tensor([
+            (
+                name_to_index[name],
+                x_labels[name_to_label[name]],
+                y_labels[name_to_label[name]],
+            )
+            for name in union
+        ])
+
+        self.index_map = self.union_indexes[:, 1:].numpy()
+
+
 if __name__ == '__main__':
     seed = 1
-    trainer = pl.Trainer(gpus=0, max_epochs=1500, progress_bar_refresh_rate=20)
+    trainer = pl.Trainer(gpus=0, max_epochs=500, progress_bar_refresh_rate=20)
     batch_size = 100
     # train audioset against itself
     cooc_file = "/opt/github.com/spond/spond/experimental/audioset/co_occurrence_audio_all.pt"
     labels_file = "/opt/github.com/spond/spond/experimental/audioset/class_labels.csv"
     dim = 6
+    datadict = DataDictionary(
+        x_cooc=torch.load(cooc_file),
+        x_labels_file=labels_file,
+        y_cooc=torch.load(cooc_file),
+        y_labels_file=labels_file,
+        all_labels_file=labels_file
+    )
+    # temporarily: hack the index map so only a few concepts are aligned
+    #datadict.index_map = datadict.index_map[:3]
     model = AlignedGlove(batch_size,
-                         # all files must be full paths
-                         x_cooc_file=cooc_file,      # co-occurrence file for x
+                         data=datadict,
                          x_embedding_dim=dim,  # dimension of x
-                         x_labels_file=labels_file,    # file containing all x labels to names
-                         y_cooc_file=cooc_file,      # co-occurrence file for y
                          y_embedding_dim=dim,  # dimension of y
-                         y_labels_file=labels_file,    # file containg all y labels to names
-                         all_labels_file=labels_file,        # file containing all labels to names
                          seed=seed)
     trainer.fit(model)
-
