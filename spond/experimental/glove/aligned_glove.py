@@ -28,38 +28,33 @@ from spond.experimental.openimages.readfile import readlabels
 HIDDEN = 100
 
 
-def torch_mapping_misclassified_1nn(f_x, y):
+def torch_mapping_misclassified_1nn(mapped, target, indexes): #f_x, y):
+    # mapped: mapped original embeddings, approximations of the target
+    # target: actual target embedding
+    # indexes: indexes describing
+    #          which embeddings should be checked for correspondence
+    #          meaning if indexes 2, 3, 6 are passed, we should check
+    #          if the nearest neighbours of mapped[2, 3, 6] are
+    #          target[2, 3, 6].
+
     # equivalent of mapping_accuracy but implemented in torch,
     # and only for 1nn. Returns the misclassification rather than accuracy
     # because we want to pass this to the optimiser for minimisation.
     # again, weird compute mode is needed because without it,
     # distance from an item to itself is not 0.
-    dist = torch.cdist(f_x, y, compute_mode="donot_use_mm_for_euclid_dist")
-    #dist2 = torch.norm(f_x - y, p=2, dim=1)
-    #values, inds = dist.sort(dim=0)
+    dist = torch.cdist(mapped[indexes], target, compute_mode="donot_use_mm_for_euclid_dist")
     values, nn_inds = dist.topk(1, dim=1, largest=False)
-    # None of the following backpropagate in torch
-    # probably because there are no gradients defined
-    # we need to work out how to define something that has a gradient
-    nconcepts = f_x.size()[0]
-    mismatches = torch.arange(nconcepts) != nn_inds.squeeze()
     # we need to do something sneaky to count the mismatches.
     # If we just sum the mismatches, there is no backpropagation.
-    #dummy_fx = f_x[mismatches].sum(axis=1)
-    #dummy_y = y[mismatches].sum(axis=1)
     # Therefore, we have to do something to force the f_x and y to be
     # involved in the calculation
     #count = sum(dummy_fx/dummy_fx + dummy_y/dummy_y)
     #count /= 2
-    try:
-        included = values.squeeze(dim=0)[mismatches]
-    except:
-        raise
-    count = included/included
-    loss = count.sum() / nconcepts
-    #loss = mismatches.float().mean()
-    #return loss
-    #loss = values[0].mean()
+    nn_inds = nn_inds.squeeze(dim=1)
+    mismatches = nn_inds != torch.tensor(indexes)
+    included = values.squeeze(dim=1)[mismatches]
+    count = included / included#.detach()
+    loss = count.sum() / len(indexes)
     return loss
 
 
@@ -73,9 +68,7 @@ class AlignedGloveLayer(nn.Module):
                  index_map,              # list of pairs that map a concept in x
                                          # to a concept in y
                  seed=None,
-                 probabilistic=False,     # If set, use ProbabilisticGloveLayer
-                 x_limit=None,
-                 y_limit=None
+                 probabilistic=False     # If set, use ProbabilisticGloveLayer
                  ):
         super(AlignedGloveLayer, self).__init__()
         self.seed = seed
@@ -142,40 +135,45 @@ class AlignedGloveLayer(nn.Module):
         x_present = list(set(self.index_map.keys()).intersection(set(x_inds.tolist())))
         # only do stuff if there are any shared items present in the x domain
         if len(x_present):
-            # we also need the y values that x_present mapped to
-            y_check = [self.index_map[k] for k in x_present]
-            # 2. distance between fx and y_embedding
-            fx_input = self.x_emb.weight[x_present]
-            fx_output = self.fx(fx_input)
-            x_rt = self.gy(fx_output)
-            fx_diff = x_rt - fx_input
-            fx_loss = torch.sqrt(torch.einsum('ij,ij->i', fx_diff, fx_diff))
-            # 4. 1 if nearest neighbour of f(x) is not the known y mapping,
-            #    0 otherwise
+            x_mapped = self.fx(self.x_emb.weight)
             fx_mismatch = torch_mapping_misclassified_1nn(
-                fx_output,
-                self.y_emb.weight[y_check]
+                x_mapped, self.y_emb.weight, x_present
             )
+            # # we also need the y values that x_present mapped to
+            # y_check = [self.index_map[k] for k in x_present]
+            # # 2. distance between fx and y_embedding
+            # fx_input = self.x_emb.weight[x_present]
+            # fx_output = self.fx(fx_input)
+            # x_rt = self.gy(fx_output)
+            # fx_diff = x_rt - fx_input
+            # fx_loss = torch.sqrt(torch.einsum('ij,ij->i', fx_diff, fx_diff))
+            # # 4. 1 if nearest neighbour of f(x) is not the known y mapping,
+            # #    0 otherwise
+            # fx_mismatch = torch_mapping_misclassified_1nn(
+            #     fx_output,
+            #     self.y_emb.weight[y_check]
+            # )
             self.losses.append(fx_mismatch)
         y_present = list(set(self.rev_index_map.keys()).intersection(
             set(y_inds.tolist())))
         if len(y_present):
-            x_check = [self.rev_index_map[k] for k in y_present]
-            # 3. distance between gy and x_embedding
-            gy_input = self.y_emb.weight[y_present]
-            gy_output = self.gy(gy_input)
-            y_rt = self.fx(gy_output)
-            gy_diff = y_rt - gy_input
-            gy_loss = torch.sqrt(torch.einsum('ij,ij->i', gy_diff, gy_diff))
-            # 5. 1 if nearest neighbour of g(y) is not the known x mapping,
-            #    0 otherwise
-            try:
-                gy_mismatch = torch_mapping_misclassified_1nn(
-                    gy_output,
-                    self.x_emb.weight[x_check]
-                )
-            except:
-                raise
+            y_mapped = self.gy(self.y_emb.weight)
+            gy_mismatch = torch_mapping_misclassified_1nn(
+                y_mapped, self.x_emb.weight, y_present
+            )
+            # x_check = [self.rev_index_map[k] for k in y_present]
+            # # 3. distance between gy and x_embedding
+            # gy_input = self.y_emb.weight[y_present]
+            # gy_output = self.gy(gy_input)
+            # y_rt = self.fx(gy_output)
+            # gy_diff = y_rt - gy_input
+            # gy_loss = torch.sqrt(torch.einsum('ij,ij->i', gy_diff, gy_diff))
+            # # 5. 1 if nearest neighbour of g(y) is not the known x mapping,
+            # #    0 otherwise
+            # gy_mismatch = torch_mapping_misclassified_1nn(
+            #     gy_output,
+            #     self.x_emb.weight[x_check]
+            # )
             self.losses.append(gy_mismatch)
         print(f"losses: {self.losses}")
         # Losses must be summed like below, or learning doesn't happen
@@ -264,13 +262,15 @@ class AlignedGlove(pl.LightningModule):
         return opt
 
     def train_dataloader(self):
-        dataset = GloveDualDataset(self.data.x_cooc.size()[0], self.data.y_cooc.size()[0])
+        #dataset = GloveDualDataset(self.data.x_cooc.size()[0], self.data.y_cooc.size()[0])
+        dataset = GloveDualDataset(self.data)
         return DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
 
 
 class GloveDualDataset(Dataset):
 
-    def __init__(self, x_n, y_n):
+    def __init__(self, data): #x_n, y_n):
+        self.data = data
         # Internally, Lightning will make index samples based on whatever
         # is returned by self.__len__().
         # This means that if len(self) = 2000 and batch size is 300,
@@ -297,6 +297,8 @@ class GloveDualDataset(Dataset):
         # Then, one batch will be 100 pairs of indices from both sets,
         # and we should go randomly through multiple iterations of the
         # smaller dataset.
+        x_n = self.data.x_n
+        y_n = self.data.y_n
         self.x_n = x_n
         self.y_n = y_n
         self.N = max(x_n, y_n)
@@ -339,6 +341,10 @@ class DataDictionary:
 
         self.x_cooc = x_cooc
         self.y_cooc = y_cooc
+
+        self.x_n = x_nconcepts
+        self.y_n = y_nconcepts
+
         all_labels, all_names = readlabels(all_labels_file, rootdir=None)
         name_to_label = {v: k for k, v in all_names.items()}
         index_to_label = {v: k for k, v in all_labels.items()}
@@ -400,12 +406,28 @@ class DataDictionary:
 
 
 if __name__ == '__main__':
+
+    import os
+    import socket
+    if socket.gethostname().endswith('pals.ucl.ac.uk'):
+        # set up pythonpath
+        ppath = '/home/petra/spond'
+        # set up data pth
+        datapath = '/home/petra/data'
+        gpu = True
+    else:
+        ppath = '/opt/github.com/spond/spond/experimental'
+        datapath = ppath
+        gpu = False
+
+    sys.path.append(ppath)
+
     seed = 1
-    trainer = pl.Trainer(gpus=0, max_epochs=500, progress_bar_refresh_rate=20)
+    trainer = pl.Trainer(gpus=int(gpu), max_epochs=500, progress_bar_refresh_rate=20)
     batch_size = 100
     # train audioset against itself
-    cooc_file = "/opt/github.com/spond/spond/experimental/audioset/co_occurrence_audio_all.pt"
-    labels_file = "/opt/github.com/spond/spond/experimental/audioset/class_labels.csv"
+    cooc_file = os.path.join(datapath, 'audioset', "co_occurrence_audio_all.pt")
+    labels_file = os.path.join(datapath, 'audioset', "class_labels.csv")
     dim = 6
     datadict = DataDictionary(
         x_cooc=torch.load(cooc_file),
@@ -415,7 +437,7 @@ if __name__ == '__main__':
         all_labels_file=labels_file
     )
     # temporarily: hack the index map so only a few concepts are aligned
-    #datadict.index_map = datadict.index_map[:3]
+    datadict.index_map = datadict.index_map[:20]
     model = AlignedGlove(batch_size,
                          data=datadict,
                          x_embedding_dim=dim,  # dimension of x
