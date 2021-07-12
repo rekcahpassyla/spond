@@ -48,12 +48,12 @@ def torch_mapping_misclassified_1nn(mapped, target, indexes, device='cpu'): #f_x
     # If we just sum the mismatches, there is no backpropagation.
     # Therefore, we have to do something to force the f_x and y to be
     # involved in the calculation
-    #count = sum(dummy_fx/dummy_fx + dummy_y/dummy_y)
-    #count /= 2
     nn_inds = nn_inds.squeeze(dim=1)
     mismatches = nn_inds != torch.tensor(indexes).to(device)
     included = values.squeeze(dim=1)[mismatches]
-    count = included / included#.detach()
+    # trying a lot of things to basically end up with the number of items
+    # that are mismatched.
+    count = torch.ceil(included) - torch.floor(included)
     loss = count.sum() / len(indexes)
     return loss
 
@@ -133,48 +133,54 @@ class AlignedGloveLayer(nn.Module):
         # rev_index_map are small, and therefore using numpy operations
         # is fast.
         x_present = list(set(self.index_map.keys()).intersection(set(x_inds.tolist())))
+        x_mapped = self.fx(self.x_emb.weight)
+        y_mapped = self.gy(self.y_emb.weight)
+        # calculate cycle loss: g(f(x)) - x
+        x_rt = self.gy(x_mapped)
+        fx_diff = x_rt - self.x_emb.weight
+        # This is the cycle loss: |f(g(x)) - x|
+        # sum or mean?
+        cycle_fx_loss = torch.sqrt(torch.einsum('ij,ij->i', fx_diff, fx_diff)).sum()
+        self.losses.append(cycle_fx_loss)
+
+        # other cycle loss: f(g(y)) - y
+        y_rt = self.fx(y_mapped)
+        gy_diff = y_rt - self.y_emb.weight
+        cycle_gy_loss = torch.sqrt(torch.einsum('ij,ij->i', gy_diff, gy_diff)).sum()
+        self.losses.append(cycle_gy_loss)
+
         # only do stuff if there are any shared items present in the x domain
         if len(x_present):
-            x_mapped = self.fx(self.x_emb.weight)
-            fx_mismatch = torch_mapping_misclassified_1nn(
-                x_mapped, self.y_emb.weight, x_present, self.device
-            )
-            # # we also need the y values that x_present mapped to
-            # y_check = [self.index_map[k] for k in x_present]
-            # # 2. distance between fx and y_embedding
-            # fx_input = self.x_emb.weight[x_present]
-            # fx_output = self.fx(fx_input)
-            # x_rt = self.gy(fx_output)
-            # fx_diff = x_rt - fx_input
-            # fx_loss = torch.sqrt(torch.einsum('ij,ij->i', fx_diff, fx_diff))
+            # we also need the y values that x_present mapped to
+            y_check = [self.index_map[k] for k in x_present]
+            # 2. distance between fx and y_embedding
+            # this is called the "supervised loss"
+            sup_diff_x = x_mapped[x_present] - self.y_emb.weight[y_check]
+            sup_loss_x = torch.sqrt(
+                torch.einsum('ij,ij->i', sup_diff_x, sup_diff_x)).sum()
+            self.losses.append(sup_loss_x)
             # # 4. 1 if nearest neighbour of f(x) is not the known y mapping,
             # #    0 otherwise
-            # fx_mismatch = torch_mapping_misclassified_1nn(
-            #     fx_output,
-            #     self.y_emb.weight[y_check]
-            # )
-            self.losses.append(fx_mismatch)
+            #fx_mismatch = torch_mapping_misclassified_1nn(
+            #    x_mapped, self.y_emb.weight, x_present, self.device
+            #)
+            #self.losses.append(fx_mismatch)
+
         y_present = list(set(self.rev_index_map.keys()).intersection(
             set(y_inds.tolist())))
         if len(y_present):
-            y_mapped = self.gy(self.y_emb.weight)
-            gy_mismatch = torch_mapping_misclassified_1nn(
-                y_mapped, self.x_emb.weight, y_present, self.device
-            )
-            # x_check = [self.rev_index_map[k] for k in y_present]
-            # # 3. distance between gy and x_embedding
-            # gy_input = self.y_emb.weight[y_present]
-            # gy_output = self.gy(gy_input)
-            # y_rt = self.fx(gy_output)
-            # gy_diff = y_rt - gy_input
-            # gy_loss = torch.sqrt(torch.einsum('ij,ij->i', gy_diff, gy_diff))
+            x_check = [self.rev_index_map[k] for k in y_present]
+            # 3. distance between gy and x_embedding
+            sup_diff_y = y_mapped[y_present] - self.x_emb.weight[x_check]
+            sup_loss_y = torch.sqrt(
+                torch.einsum('ij,ij->i', sup_diff_y, sup_diff_y)).sum()
+            self.losses.append(sup_loss_y)
             # # 5. 1 if nearest neighbour of g(y) is not the known x mapping,
             # #    0 otherwise
-            # gy_mismatch = torch_mapping_misclassified_1nn(
-            #     gy_output,
-            #     self.x_emb.weight[x_check]
-            # )
-            self.losses.append(gy_mismatch)
+            #gy_mismatch = torch_mapping_misclassified_1nn(
+            #    y_mapped, self.x_emb.weight, y_present, self.device
+            #)
+            #self.losses.append(gy_mismatch)
         print(f"losses: {self.losses}")
         # Losses must be summed like below, or learning doesn't happen
         # cannot convert to a tensor containing self.losses,
@@ -373,7 +379,7 @@ class DataDictionary:
                 # we have to use labels as the union,
                 # because there are multiple labels with the same name.
                 # for example /m/07qcpgn is Tap in audioset, meaning the sound Tap
-                # but /m/02jz0l is Tap in openimages meaning the object Tap. 
+                # but /m/02jz0l is Tap in openimages meaning the object Tap.
                 union[x_label] = (x_labels[x_label], y_labels[y_name_to_label[x_name]])
         # Tuple of (index in all, index in x, index in y)
         # TODO: ugh, too many levels of indirection, clean up later.
@@ -412,7 +418,7 @@ class DataDictionary:
             #import pdb
             #pdb.set_trace()
             raise
-            
+
         self.index_map = self.union_indexes[:, 1:].numpy()
 
 
@@ -441,15 +447,20 @@ if __name__ == '__main__':
     # https://discuss.pytorch.org/t/cuda-invalid-configuration-error-on-gpu-only/50399/15
     batch_size = 50
     # train audioset against itself
-    x_cooc_file = os.path.join(datapath, 'openimages', "co_occurrence.pt")
-    x_labels_file = os.path.join(datapath, 'openimages', "oidv6-class-descriptions.csv")
-    x_dim = 30
-    
+    #x_cooc_file = os.path.join(datapath, 'openimages', "co_occurrence.pt")
+    #x_labels_file = os.path.join(datapath, 'openimages', "oidv6-class-descriptions.csv")
+    #x_dim = 30
+
     y_cooc_file = os.path.join(datapath, 'audioset', "co_occurrence_audio_all.pt")
-    y_labels_file = os.path.join(datapath, 'audioset', "class_labels.csv")    
+    y_labels_file = os.path.join(datapath, 'audioset', "class_labels.csv")
     y_dim = 6
 
-    all_labels_file = os.path.join(datapath, "all_labels.csv")
+    x_cooc_file = y_cooc_file
+    x_labels_file = y_labels_file
+    x_dim = y_dim
+
+    #all_labels_file = os.path.join(datapath, "all_labels.csv")
+    all_labels_file = x_labels_file
 
     datadict = DataDictionary(
         x_cooc=torch.load(x_cooc_file),
@@ -459,7 +470,7 @@ if __name__ == '__main__':
         all_labels_file=all_labels_file
     )
     # temporarily: hack the index map so only a few concepts are aligned
-    #datadict.index_map = datadict.index_map[:20]
+    #datadict.index_map = datadict.index_map[:5]
     model = AlignedGlove(batch_size,
                          data=datadict,
                          x_embedding_dim=x_dim,  # dimension of x
