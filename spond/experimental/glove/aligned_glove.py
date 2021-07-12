@@ -448,7 +448,7 @@ if __name__ == '__main__':
     # It may be due to some internal array being larger than 65535 when cdist is used.
     # https://github.com/pytorch/pytorch/issues/49928
     # https://discuss.pytorch.org/t/cuda-invalid-configuration-error-on-gpu-only/50399/15
-    batch_size = 50
+    batch_size = 1000
     y_cooc_file = os.path.join(datapath, 'audioset', "co_occurrence_audio_all.pt")
     y_labels_file = os.path.join(datapath, 'audioset', "class_labels.csv")
     y_dim = 6
