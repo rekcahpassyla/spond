@@ -96,6 +96,7 @@ class AlignedGloveLayer(nn.Module):
         # g(y) --> x
         self.gy = MLP(y_embedding_dim, HIDDEN, output_size=x_embedding_dim)
         self.device = None
+        self.aligned = False
 
     def _init_samples(self):
         # TODO: not sure how this will work with different dataset sizes
@@ -139,14 +140,15 @@ class AlignedGloveLayer(nn.Module):
         x_rt = self.gy(x_mapped)
         fx_diff = x_rt - self.x_emb.weight
         # This is the cycle loss: |f(g(x)) - x|
-        # sum or mean?
-        cycle_fx_loss = torch.sqrt(torch.einsum('ij,ij->i', fx_diff, fx_diff)).sum()
+        # sum or mean? I have a feeling if we use sum, then this loss will
+        # override the mismatch loss
+        cycle_fx_loss = torch.sqrt(torch.einsum('ij,ij->i', fx_diff, fx_diff)).mean() #sum()
         self.losses.append(cycle_fx_loss)
 
         # other cycle loss: f(g(y)) - y
         y_rt = self.fx(y_mapped)
         gy_diff = y_rt - self.y_emb.weight
-        cycle_gy_loss = torch.sqrt(torch.einsum('ij,ij->i', gy_diff, gy_diff)).sum()
+        cycle_gy_loss = torch.sqrt(torch.einsum('ij,ij->i', gy_diff, gy_diff)).mean() #sum()
         self.losses.append(cycle_gy_loss)
 
         # only do stuff if there are any shared items present in the x domain
@@ -157,14 +159,14 @@ class AlignedGloveLayer(nn.Module):
             # this is called the "supervised loss"
             sup_diff_x = x_mapped[x_present] - self.y_emb.weight[y_check]
             sup_loss_x = torch.sqrt(
-                torch.einsum('ij,ij->i', sup_diff_x, sup_diff_x)).sum()
+                torch.einsum('ij,ij->i', sup_diff_x, sup_diff_x)).mean()
             self.losses.append(sup_loss_x)
             # # 4. 1 if nearest neighbour of f(x) is not the known y mapping,
             # #    0 otherwise
-            #fx_mismatch = torch_mapping_misclassified_1nn(
-            #    x_mapped, self.y_emb.weight, x_present, self.device
-            #)
-            #self.losses.append(fx_mismatch)
+            fx_mismatch = torch_mapping_misclassified_1nn(
+                x_mapped, self.y_emb.weight, x_present, self.device
+            )
+            self.losses.append(fx_mismatch)
 
         y_present = list(set(self.rev_index_map.keys()).intersection(
             set(y_inds.tolist())))
@@ -173,14 +175,14 @@ class AlignedGloveLayer(nn.Module):
             # 3. distance between gy and x_embedding
             sup_diff_y = y_mapped[y_present] - self.x_emb.weight[x_check]
             sup_loss_y = torch.sqrt(
-                torch.einsum('ij,ij->i', sup_diff_y, sup_diff_y)).sum()
+                torch.einsum('ij,ij->i', sup_diff_y, sup_diff_y)).mean()
             self.losses.append(sup_loss_y)
             # # 5. 1 if nearest neighbour of g(y) is not the known x mapping,
             # #    0 otherwise
-            #gy_mismatch = torch_mapping_misclassified_1nn(
-            #    y_mapped, self.x_emb.weight, y_present, self.device
-            #)
-            #self.losses.append(gy_mismatch)
+            gy_mismatch = torch_mapping_misclassified_1nn(
+                y_mapped, self.x_emb.weight, y_present, self.device
+            )
+            self.losses.append(gy_mismatch)
         print(f"losses: {self.losses}")
         # Losses must be summed like below, or learning doesn't happen
         # cannot convert to a tensor containing self.losses,
