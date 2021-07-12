@@ -28,7 +28,7 @@ from spond.experimental.openimages.readfile import readlabels
 HIDDEN = 100
 
 
-def torch_mapping_misclassified_1nn(mapped, target, indexes): #f_x, y):
+def torch_mapping_misclassified_1nn(mapped, target, indexes, device='cpu'): #f_x, y):
     # mapped: mapped original embeddings, approximations of the target
     # target: actual target embedding
     # indexes: indexes describing
@@ -42,7 +42,7 @@ def torch_mapping_misclassified_1nn(mapped, target, indexes): #f_x, y):
     # because we want to pass this to the optimiser for minimisation.
     # again, weird compute mode is needed because without it,
     # distance from an item to itself is not 0.
-    dist = torch.cdist(mapped[indexes], target, compute_mode="donot_use_mm_for_euclid_dist")
+    dist = torch.cdist(mapped[indexes], target, compute_mode="donot_use_mm_for_euclid_dist").to(device)
     values, nn_inds = dist.topk(1, dim=1, largest=False)
     # we need to do something sneaky to count the mismatches.
     # If we just sum the mismatches, there is no backpropagation.
@@ -51,7 +51,7 @@ def torch_mapping_misclassified_1nn(mapped, target, indexes): #f_x, y):
     #count = sum(dummy_fx/dummy_fx + dummy_y/dummy_y)
     #count /= 2
     nn_inds = nn_inds.squeeze(dim=1)
-    mismatches = nn_inds != torch.tensor(indexes)
+    mismatches = nn_inds != torch.tensor(indexes).to(device)
     included = values.squeeze(dim=1)[mismatches]
     count = included / included#.detach()
     loss = count.sum() / len(indexes)
@@ -137,7 +137,7 @@ class AlignedGloveLayer(nn.Module):
         if len(x_present):
             x_mapped = self.fx(self.x_emb.weight)
             fx_mismatch = torch_mapping_misclassified_1nn(
-                x_mapped, self.y_emb.weight, x_present
+                x_mapped, self.y_emb.weight, x_present, self.device
             )
             # # we also need the y values that x_present mapped to
             # y_check = [self.index_map[k] for k in x_present]
@@ -159,7 +159,7 @@ class AlignedGloveLayer(nn.Module):
         if len(y_present):
             y_mapped = self.gy(self.y_emb.weight)
             gy_mismatch = torch_mapping_misclassified_1nn(
-                y_mapped, self.x_emb.weight, y_present
+                y_mapped, self.x_emb.weight, y_present, self.device
             )
             # x_check = [self.rev_index_map[k] for k in y_present]
             # # 3. distance between gy and x_embedding
@@ -309,8 +309,9 @@ class GloveDualDataset(Dataset):
 
         smaller_inds = np.repeat([np.arange(smaller)], times, axis=0).ravel()[:larger]
         np.random.shuffle(smaller_inds)
-        self.x = torch.arange(self.N)
-        self.y = torch.vstack([torch.arange(larger), torch.tensor(smaller_inds)]).T
+        self.inds = torch.arange(self.N)
+        # TODO: fix this, there's an assumption that x is larger than y
+        self.out = torch.vstack([torch.arange(larger), torch.tensor(smaller_inds)]).T
 
     def __len__(self):
         return self.N
@@ -319,9 +320,9 @@ class GloveDualDataset(Dataset):
         # This must return whatever we map idx to internally.
         # It doesn't matter what is returned as long as we
         # unpack it correctly inside the training loop.
-        x = self.x[idx]
-        y = self.y[idx]
-        return x, y
+        inds = self.inds[idx]
+        out = self.out[idx]
+        return inds, out
 
 
 class DataDictionary:
@@ -369,13 +370,18 @@ class DataDictionary:
         union = {}
         for x_label, x_name in x_names.items():
             if x_label in y_names:
-                union[x_name] = (x_labels[x_label], y_labels[y_name_to_label[x_name]])
-        self.union_names = union
+                # we have to use labels as the union,
+                # because there are multiple labels with the same name.
+                # for example /m/07qcpgn is Tap in audioset, meaning the sound Tap
+                # but /m/02jz0l is Tap in openimages meaning the object Tap. 
+                union[x_label] = (x_labels[x_label], y_labels[y_name_to_label[x_name]])
         # Tuple of (index in all, index in x, index in y)
         # TODO: ugh, too many levels of indirection, clean up later.
-        index_map = list(self.union_names.values())
+        index_map = list(union.values())
         x_indexes = torch.tensor([all_labels[label] for label in x_labels])
         y_indexes = torch.tensor([all_labels[label] for label in y_labels])
+
+        self.union_names = union
 
         # universe: keys = labels, values = index into universe
         self.all_labels = all_labels
@@ -393,15 +399,20 @@ class DataDictionary:
         # y index 77 is Cat then
         # self.union_indexes contains
         #  (5, 0, 77)
-        self.union_indexes = torch.tensor([
-            (
-                name_to_index[name],
-                x_labels[name_to_label[name]],
-                y_labels[name_to_label[name]],
-            )
-            for name in union
-        ])
-
+        try:
+            self.union_indexes = torch.tensor([
+                (
+                    all_labels[label],
+                    x_labels[label],
+                    y_labels[label]
+                )
+                for label in union
+            ])
+        except:
+            #import pdb
+            #pdb.set_trace()
+            raise
+            
         self.index_map = self.union_indexes[:, 1:].numpy()
 
 
@@ -424,23 +435,34 @@ if __name__ == '__main__':
 
     seed = 1
     trainer = pl.Trainer(gpus=int(gpu), max_epochs=500, progress_bar_refresh_rate=20)
-    batch_size = 100
+    # batch sizes larger than 100 causes a strange CUDA error
+    # It may be due to some internal array being larger than 65535 when cdist is used.
+    # https://github.com/pytorch/pytorch/issues/49928
+    # https://discuss.pytorch.org/t/cuda-invalid-configuration-error-on-gpu-only/50399/15
+    batch_size = 50
     # train audioset against itself
-    cooc_file = os.path.join(datapath, 'audioset', "co_occurrence_audio_all.pt")
-    labels_file = os.path.join(datapath, 'audioset', "class_labels.csv")
-    dim = 6
+    x_cooc_file = os.path.join(datapath, 'openimages', "co_occurrence.pt")
+    x_labels_file = os.path.join(datapath, 'openimages', "oidv6-class-descriptions.csv")
+    x_dim = 30
+    
+    y_cooc_file = os.path.join(datapath, 'audioset', "co_occurrence_audio_all.pt")
+    y_labels_file = os.path.join(datapath, 'audioset', "class_labels.csv")    
+    y_dim = 6
+
+    all_labels_file = os.path.join(datapath, "all_labels.csv")
+
     datadict = DataDictionary(
-        x_cooc=torch.load(cooc_file),
-        x_labels_file=labels_file,
-        y_cooc=torch.load(cooc_file),
-        y_labels_file=labels_file,
-        all_labels_file=labels_file
+        x_cooc=torch.load(x_cooc_file),
+        x_labels_file=x_labels_file,
+        y_cooc=torch.load(y_cooc_file),
+        y_labels_file=y_labels_file,
+        all_labels_file=all_labels_file
     )
     # temporarily: hack the index map so only a few concepts are aligned
-    datadict.index_map = datadict.index_map[:20]
+    #datadict.index_map = datadict.index_map[:20]
     model = AlignedGlove(batch_size,
                          data=datadict,
-                         x_embedding_dim=dim,  # dimension of x
-                         y_embedding_dim=dim,  # dimension of y
+                         x_embedding_dim=x_dim,  # dimension of x
+                         y_embedding_dim=y_dim,  # dimension of y
                          seed=seed)
     trainer.fit(model)
