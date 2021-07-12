@@ -428,7 +428,8 @@ if __name__ == '__main__':
 
     import os
     import socket
-    if socket.gethostname().endswith('pals.ucl.ac.uk'):
+    remote = socket.gethostname().endswith('pals.ucl.ac.uk')
+    if remote:
         # set up pythonpath
         ppath = '/home/petra/spond'
         # set up data pth
@@ -448,21 +449,20 @@ if __name__ == '__main__':
     # https://github.com/pytorch/pytorch/issues/49928
     # https://discuss.pytorch.org/t/cuda-invalid-configuration-error-on-gpu-only/50399/15
     batch_size = 50
-    # train audioset against itself
-    #x_cooc_file = os.path.join(datapath, 'openimages', "co_occurrence.pt")
-    #x_labels_file = os.path.join(datapath, 'openimages', "oidv6-class-descriptions.csv")
-    #x_dim = 30
-
     y_cooc_file = os.path.join(datapath, 'audioset', "co_occurrence_audio_all.pt")
     y_labels_file = os.path.join(datapath, 'audioset', "class_labels.csv")
     y_dim = 6
-
-    x_cooc_file = y_cooc_file
-    x_labels_file = y_labels_file
-    x_dim = y_dim
-
-    #all_labels_file = os.path.join(datapath, "all_labels.csv")
-    all_labels_file = x_labels_file
+    if remote:
+        x_cooc_file = os.path.join(datapath, 'openimages', "co_occurrence.pt")
+        x_labels_file = os.path.join(datapath, 'openimages', "oidv6-class-descriptions.csv")
+        x_dim = 30
+        all_labels_file = os.path.join(datapath, "all_labels.csv")
+    else:
+        # train audioset against itself
+        x_cooc_file = y_cooc_file
+        x_labels_file = y_labels_file
+        x_dim = y_dim
+        all_labels_file = x_labels_file
 
     datadict = DataDictionary(
         x_cooc=torch.load(x_cooc_file),
