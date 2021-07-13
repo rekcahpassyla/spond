@@ -229,6 +229,45 @@ class AlignedGlove(pl.LightningModule):
             seed=seed
         )
 
+    def additional_state(self):
+        # return dictionary of things that were passed to constructor
+        # should contain everything necessary to replicate a model.
+        # we don't save things like the actual training data and so on
+        # obviously this means that when the model is loaded,
+        # the appropriate training file must be present.
+        state = dict(
+            seed=self.seed,
+            batch_size=self.batch_size,
+            x_embedding_dim=self.x_embedding_dim,
+            y_embedding_dim=self.y_embedding_dim
+        )
+        state.update(self.data.state_dict())
+        return state
+
+    def save(self, filename):
+        state = self.state_dict()
+        state.update(self.additional_state())
+        torch.save(state, filename)
+
+    @classmethod
+    def load(cls, filename, device='cpu'):
+        state = torch.load(filename, map_location=device)
+        data_items = (
+            'x_cooc', 'x_labels_file', 'y_cooc', 'y_labels_file',
+            'all_labels_file'
+        )
+        additional_state = {}
+        for item in data_items:
+            additional_state[item] = state.pop(item)
+        data = DataDictionary(**additional_state)
+        additional_state = {'data': data}
+        items = ('seed', 'x_embedding_dim', 'y_embedding_dim', 'batch_size')
+        for item in items:
+            additional_state[item] = state.pop(item)
+        instance = cls(**additional_state)
+        instance.load_state_dict(state)
+        return instance
+
     def forward(self, indices):
         # indices are a tuple of x and y index
         x_ind, y_ind = indices
@@ -257,20 +296,15 @@ class AlignedGlove(pl.LightningModule):
         y_ind = xy_indices[:, 1]
         # forward step
         losses = self.forward((x_ind, y_ind))
-        #loss = torch.sum(losses)
-        #print(f"loss: {loss}")
-        #return loss
         print(f"losses: {losses}")
         loss = torch.sum(losses)
         return loss
 
     def configure_optimizers(self):
         opt = optim.Adam(self.parameters(), lr=0.005)
-        #opt = optim.Adagrad(self.parameters(), lr=0.05)
         return opt
 
     def train_dataloader(self):
-        #dataset = GloveDualDataset(self.data.x_cooc.size()[0], self.data.y_cooc.size()[0])
         dataset = GloveDualDataset(self.data)
         return DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
 
@@ -348,12 +382,14 @@ class DataDictionary:
         x_nconcepts = x_cooc.size()[0]
         y_nconcepts = y_cooc.size()[0]
 
+        self.x_labels_file = x_labels_file
+        self.y_labels_file = y_labels_file
         self.x_cooc = x_cooc
         self.y_cooc = y_cooc
 
         self.x_n = x_nconcepts
         self.y_n = y_nconcepts
-
+        self.all_labels_file = all_labels_file
         all_labels, all_names = readlabels(all_labels_file, rootdir=None)
         name_to_label = {v: k for k, v in all_names.items()}
         index_to_label = {v: k for k, v in all_labels.items()}
@@ -407,21 +443,30 @@ class DataDictionary:
         # y index 77 is Cat then
         # self.union_indexes contains
         #  (5, 0, 77)
-        try:
-            self.union_indexes = torch.tensor([
-                (
-                    all_labels[label],
-                    x_labels[label],
-                    y_labels[label]
-                )
-                for label in union
-            ])
-        except:
-            #import pdb
-            #pdb.set_trace()
-            raise
+        self.union_indexes = torch.tensor([
+            (
+                all_labels[label],
+                x_labels[label],
+                y_labels[label]
+            )
+            for label in union
+        ])
 
         self.index_map = self.union_indexes[:, 1:].numpy()
+
+    def state_dict(self):
+        # this will only work if all the files are strings
+        check_files = (self.x_labels_file, self.y_labels_file, self.all_labels_file)
+        if not all([isinstance(f, str) for f in check_files]):
+            raise AssertionError("Can only persist this item if all filenames are strings")
+
+        return dict(
+            x_cooc=self.x_cooc,      # co-occurrence matrix for x
+            x_labels_file=self.x_labels_file,    # full filepath or handle containing all x labels to names
+            y_cooc=self.y_cooc,      # co-occurrence matrix for y
+            y_labels_file=self.y_labels_file,    # full filepath or handle containing all y labels to names
+            all_labels_file=self.all_labels_file        # full filepath or handle containing all labels to names
+        )
 
 
 if __name__ == '__main__':
@@ -443,8 +488,9 @@ if __name__ == '__main__':
     sys.path.append(ppath)
 
     seed = 1
-    trainer = pl.Trainer(gpus=int(gpu), max_epochs=500, progress_bar_refresh_rate=20)
-    # batch sizes larger than 100 causes a strange CUDA error
+    trainer = pl.Trainer(gpus=int(gpu), max_epochs=5, progress_bar_refresh_rate=20)
+    # batch sizes larger than 100 causes a strange CUDA error with pytorch 1.7
+    # Had to upgrade to pytorch 1.9
     # It may be due to some internal array being larger than 65535 when cdist is used.
     # https://github.com/pytorch/pytorch/issues/49928
     # https://discuss.pytorch.org/t/cuda-invalid-configuration-error-on-gpu-only/50399/15
@@ -479,3 +525,5 @@ if __name__ == '__main__':
                          y_embedding_dim=y_dim,  # dimension of y
                          seed=seed)
     trainer.fit(model)
+    model.save('aligned.pt')
+    model_rt = AlignedGlove.load('aligned.pt')
