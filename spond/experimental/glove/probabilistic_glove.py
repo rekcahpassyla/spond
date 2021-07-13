@@ -358,7 +358,7 @@ class ProbabilisticGlove(pl.LightningModule):
         state = self.state_dict()
         # this is the custom state like embeddings file name, etc
         state.update(self.additional_state())
-        torch.save(state, f"{filename}")
+        torch.save(state, filename)
 
     @classmethod
     def load(cls, filename, device='cpu'):
