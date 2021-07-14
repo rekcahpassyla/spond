@@ -108,7 +108,7 @@ class ProbabilisticGloveLayer(nn.Embedding):
         # initialise the rho so softplus results in small values
         # 1e-9 - this appears to be about -20 so we have to re-center around -19?
         # except it doesn't work- re-centering just makes the means nowhere near
-        self.wi_rho.weight.data.uniform_(-1, 1) #- 19
+        self.wi_rho.weight.data.uniform_(-1, 1)
         self.bi_rho = nn.Embedding(num_embeddings, 1)
         self.bi_rho.weight.data.zero_()
         # using torch functions should ensure backprop is set up right
@@ -164,6 +164,9 @@ class ProbabilisticGloveLayer(nn.Embedding):
         else:
             sample_shape = torch.Size([n])
         wi_eps = self.wi_dist.sample(sample_shape).to(self.device)
+        if self.wi_mu.weight.device != self.device:
+            self.wi_mu = self.wi_mu.to(self.device)
+            self.wi_rho = self.wi_rho.to(self.device)  # ??? not sure why needed again
         # TODO: Only because we have assumed a diagonal covariance matrix,
         # is the below elementwise multiplication (* rather than @).
         # If it was not diagonal, we would have to do matrix multiplication
@@ -210,9 +213,6 @@ class ProbabilisticGloveLayer(nn.Embedding):
         ).squeeze()
 
         x = torch.sum(w_i * w_j, dim=1) + b_i + b_j
-        #else:
-        #    x = torch.sum(w_i, dim=1) + b_i
-        #    #x = torch.sum(w_i * w_j, dim=1) + b_i + b_j
         return x
 
     def _init_samples(self):
