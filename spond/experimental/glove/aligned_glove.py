@@ -211,6 +211,7 @@ class AlignedGlove(pl.LightningModule):
                  # all files must be full paths
                  x_embedding_dim,  # dimension of x
                  y_embedding_dim,  # dimension of y
+                 probabilistic=False,  # whether to use probabilistic layers
                  seed=None,
                  ):
         super(AlignedGlove, self).__init__()
@@ -219,6 +220,7 @@ class AlignedGlove(pl.LightningModule):
         self.data = data
         self.x_embedding_dim = x_embedding_dim
         self.y_embedding_dim = y_embedding_dim
+        self.probabilistic = probabilistic
 
         self.aligner = AlignedGloveLayer(
             self.data.x_cooc,
@@ -226,7 +228,8 @@ class AlignedGlove(pl.LightningModule):
             self.data.y_cooc,
             self.y_embedding_dim,
             self.data.index_map,
-            seed=seed
+            seed=seed,
+            probabilistic=probabilistic
         )
 
     def additional_state(self):
@@ -239,7 +242,8 @@ class AlignedGlove(pl.LightningModule):
             seed=self.seed,
             batch_size=self.batch_size,
             x_embedding_dim=self.x_embedding_dim,
-            y_embedding_dim=self.y_embedding_dim
+            y_embedding_dim=self.y_embedding_dim,
+            probabilistic=self.probabilistic
         )
         state.update(self.data.state_dict())
         return state
@@ -261,7 +265,10 @@ class AlignedGlove(pl.LightningModule):
             additional_state[item] = state.pop(item)
         data = DataDictionary(**additional_state)
         additional_state = {'data': data}
-        items = ('seed', 'x_embedding_dim', 'y_embedding_dim', 'batch_size')
+        items = (
+            'seed', 'x_embedding_dim', 'y_embedding_dim', 'batch_size',
+            'probabilistic'
+        )
         for item in items:
             additional_state[item] = state.pop(item)
         instance = cls(**additional_state)
@@ -488,13 +495,13 @@ if __name__ == '__main__':
     sys.path.append(ppath)
 
     seed = 1
-    trainer = pl.Trainer(gpus=int(gpu), max_epochs=5, progress_bar_refresh_rate=20)
+    trainer = pl.Trainer(gpus=int(gpu), max_epochs=500, progress_bar_refresh_rate=20)
     # batch sizes larger than 100 causes a strange CUDA error with pytorch 1.7
     # Had to upgrade to pytorch 1.9
     # It may be due to some internal array being larger than 65535 when cdist is used.
     # https://github.com/pytorch/pytorch/issues/49928
     # https://discuss.pytorch.org/t/cuda-invalid-configuration-error-on-gpu-only/50399/15
-    batch_size = 1000
+    batch_size = 100
     y_cooc_file = os.path.join(datapath, 'audioset', "co_occurrence_audio_all.pt")
     y_labels_file = os.path.join(datapath, 'audioset', "class_labels.csv")
     y_dim = 6
@@ -523,7 +530,8 @@ if __name__ == '__main__':
                          data=datadict,
                          x_embedding_dim=x_dim,  # dimension of x
                          y_embedding_dim=y_dim,  # dimension of y
-                         seed=seed)
+                         seed=seed,
+                         probabilistic=True)
     trainer.fit(model)
     model.save('aligned.pt')
     model_rt = AlignedGlove.load('aligned.pt')
