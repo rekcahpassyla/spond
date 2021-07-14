@@ -96,7 +96,6 @@ class AlignedGloveLayer(nn.Module):
         # g(y) --> x
         self.gy = MLP(y_embedding_dim, HIDDEN, output_size=x_embedding_dim)
         self.device = None
-        self.aligned = False
 
     def _init_samples(self):
         # TODO: not sure how this will work with different dataset sizes
@@ -158,14 +157,15 @@ class AlignedGloveLayer(nn.Module):
             # 2. distance between fx and y_embedding
             # this is called the "supervised loss"
             sup_diff_x = x_mapped[x_present] - self.y_emb.weight[y_check]
-            sup_loss_x = torch.sqrt(
-                torch.einsum('ij,ij->i', sup_diff_x, sup_diff_x)).mean()
+            # change to sq euclidean distance (remove sqrt)
+            sup_loss_x = torch.sqrt(torch.einsum('ij,ij->i', sup_diff_x, sup_diff_x)).mean()
             self.losses.append(sup_loss_x)
             # # 4. 1 if nearest neighbour of f(x) is not the known y mapping,
             # #    0 otherwise
             fx_mismatch = torch_mapping_misclassified_1nn(
                 x_mapped, self.y_emb.weight, x_present, self.device
             )
+            #print(f"f(x) mismatch: {fx_mismatch}")
             self.losses.append(fx_mismatch)
 
         y_present = list(set(self.rev_index_map.keys()).intersection(
@@ -174,14 +174,14 @@ class AlignedGloveLayer(nn.Module):
             x_check = [self.rev_index_map[k] for k in y_present]
             # 3. distance between gy and x_embedding
             sup_diff_y = y_mapped[y_present] - self.x_emb.weight[x_check]
-            sup_loss_y = torch.sqrt(
-                torch.einsum('ij,ij->i', sup_diff_y, sup_diff_y)).mean()
+            sup_loss_y = torch.sqrt(torch.einsum('ij,ij->i', sup_diff_y, sup_diff_y)).mean()
             self.losses.append(sup_loss_y)
             # # 5. 1 if nearest neighbour of g(y) is not the known x mapping,
             # #    0 otherwise
             gy_mismatch = torch_mapping_misclassified_1nn(
                 y_mapped, self.x_emb.weight, y_present, self.device
             )
+            #print(f"g(y) mismatch: {gy_mismatch}")
             self.losses.append(gy_mismatch)
         print(f"losses: {self.losses}")
         # Losses must be summed like below, or learning doesn't happen
@@ -318,7 +318,7 @@ class AlignedGlove(pl.LightningModule):
 
 class GloveDualDataset(Dataset):
 
-    def __init__(self, data): #x_n, y_n):
+    def __init__(self, data):
         self.data = data
         # Internally, Lightning will make index samples based on whatever
         # is returned by self.__len__().
@@ -372,7 +372,7 @@ class GloveDualDataset(Dataset):
         inds = self.inds[idx]
         out = self.out[idx]
         return inds, out
-
+    
 
 class DataDictionary:
     # This class takes the co-occurrence matrices and labels files
@@ -418,21 +418,21 @@ class DataDictionary:
         )
 
         y_name_to_label = {v: k for k, v in y_names.items()}
-        union = {}
+        intersection = {}
         for x_label, x_name in x_names.items():
             if x_label in y_names:
-                # we have to use labels as the union,
+                # we have to use labels as the intersection,
                 # because there are multiple labels with the same name.
                 # for example /m/07qcpgn is Tap in audioset, meaning the sound Tap
                 # but /m/02jz0l is Tap in openimages meaning the object Tap.
-                union[x_label] = (x_labels[x_label], y_labels[y_name_to_label[x_name]])
+                intersection[x_label] = (x_labels[x_label], y_labels[y_name_to_label[x_name]])
         # Tuple of (index in all, index in x, index in y)
         # TODO: ugh, too many levels of indirection, clean up later.
-        index_map = list(union.values())
+        index_map = list(intersection.values())
         x_indexes = torch.tensor([all_labels[label] for label in x_labels])
         y_indexes = torch.tensor([all_labels[label] for label in y_labels])
 
-        self.union_names = union
+        self.intersection_names = intersection
 
         # universe: keys = labels, values = index into universe
         self.all_labels = all_labels
@@ -450,16 +450,16 @@ class DataDictionary:
         # y index 77 is Cat then
         # self.union_indexes contains
         #  (5, 0, 77)
-        self.union_indexes = torch.tensor([
+        self.intersection_indexes = torch.tensor([
             (
                 all_labels[label],
                 x_labels[label],
                 y_labels[label]
             )
-            for label in union
+            for label in intersection
         ])
 
-        self.index_map = self.union_indexes[:, 1:].numpy()
+        self.index_map = self.intersection_indexes[:, 1:].numpy()
 
     def state_dict(self):
         # this will only work if all the files are strings
@@ -501,7 +501,7 @@ if __name__ == '__main__':
     # It may be due to some internal array being larger than 65535 when cdist is used.
     # https://github.com/pytorch/pytorch/issues/49928
     # https://discuss.pytorch.org/t/cuda-invalid-configuration-error-on-gpu-only/50399/15
-    batch_size = 100
+    batch_size = 1000
     y_cooc_file = os.path.join(datapath, 'audioset', "co_occurrence_audio_all.pt")
     y_labels_file = os.path.join(datapath, 'audioset', "class_labels.csv")
     y_dim = 6
@@ -531,7 +531,7 @@ if __name__ == '__main__':
                          x_embedding_dim=x_dim,  # dimension of x
                          y_embedding_dim=y_dim,  # dimension of y
                          seed=seed,
-                         probabilistic=True)
+                         probabilistic=False)
     trainer.fit(model)
-    model.save('aligned.pt')
-    model_rt = AlignedGlove.load('aligned.pt')
+    #model.save('aligned.pt')
+    #model_rt = AlignedGlove.load('aligned.pt')

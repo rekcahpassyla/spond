@@ -125,4 +125,4 @@ class TestCoocIndexParsing(TestCase):
 
         self.assertTrue((dd.x_indexes == self.x_labels_indexes).all().item())
         self.assertTrue((dd.y_indexes == self.y_labels_indexes).all().item())
-        self.assertTrue((dd.union_indexes == self.union_indexes).all().item())
+        self.assertTrue((dd.intersection_indexes == self.union_indexes).all().item())

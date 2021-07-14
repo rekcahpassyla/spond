@@ -25,7 +25,8 @@ index_to_label = {v: k for k, v in all_labels.items()}
 index_to_name = {v: all_names[k] for k, v in all_labels.items()}
 name_to_index = {v: k for k, v in index_to_name.items()}
 
-# each of the labels files is just a big list of 
+# each of the labels files is just a big list of machine IDs and their
+# corresponding names
 datafiles = {
     'openimages': {
         'labels':  os.path.join(datapath, 'openimages', 'oidv6-class-descriptions.csv'),
@@ -37,7 +38,7 @@ datafiles = {
 
 lookup = {
     'openimages': {}, 'audioset': {},
-}    
+}
 
 
 tags = ("openimages", "audioset")
@@ -59,7 +60,7 @@ for tag in tags:
     }
 
 # now find the labels that are in both domains, and the indexes of those labels
-# in the embeddings. 
+# in the embeddings.
 union = [
     item for item in lookup['audioset']['included_names']
     if item in lookup['openimages']['included_names']
@@ -70,10 +71,10 @@ for tag in tags:
         name: lookup[tag]['name_to_index'][name] for name in union
     }
 
-    
+
 stores = {
     tag: pd.HDFStore(os.path.join(resultspath, tag, "ProbabilisticGlove", f"{tag}_analytics.hdf5"), 'r')
-    for tag in tags 
+    for tag in tags
 }
 
 corrs = {
