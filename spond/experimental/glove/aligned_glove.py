@@ -27,6 +27,25 @@ from spond.experimental.openimages.readfile import readlabels
 # hidden layer size, somewhat arbitrarily choose 100
 HIDDEN = 100
 
+# build and install from https://github.com/teddykoker/torchsort
+import torchsort
+
+
+def spearmanr(pred, target, **kw):
+    pred = torchsort.soft_rank(pred, **kw)
+    target = torchsort.soft_rank(target, **kw)
+    pred = pred - pred.mean()
+    pred = pred / pred.norm()
+    target = target - target.mean()
+    target = target / target.norm()
+    return (pred * target).sum()
+
+
+def mapped_spearman_loss(pred, target):
+    # we want a value that is low when spearman is high
+    loss = 1 - torch.abs(spearmanr(pred, target))
+    return loss
+
 
 def torch_mapping_misclassified_1nn(mapped, target, indexes, device='cpu'): #f_x, y):
     # mapped: mapped original embeddings, approximations of the target
@@ -55,6 +74,7 @@ def torch_mapping_misclassified_1nn(mapped, target, indexes, device='cpu'): #f_x
     # that are mismatched.
     count = torch.ceil(included) - torch.floor(included)
     loss = count.sum() / len(indexes)
+
     return loss
 
 
@@ -153,19 +173,26 @@ class AlignedGloveLayer(nn.Module):
         self.losses.append(sup_loss_x)
         # # 4. 1 if nearest neighbour of f(x) is not the known y mapping,
         # #    0 otherwise
-        fx_mismatch = torch_mapping_misclassified_1nn(
-            x_mapped, self.y_emb.weight, x_intersect, self.device
-        )
-        self.losses.append(fx_mismatch)
+        #fx_mismatch = torch_mapping_misclassified_1nn(
+        #    x_mapped, self.y_emb.weight, x_intersect, self.device
+        #)
+        #self.losses.append(fx_mismatch)
+        fx_y_spearman = mapped_spearman_loss(x_mapped[x_intersect], self.y_emb.weight[y_intersect])
+        self.losses.append(fx_y_spearman)
+
         sup_diff_y = y_mapped[y_intersect] - self.x_emb.weight[x_intersect]
         sup_loss_y = torch.sqrt(torch.einsum('ij,ij->i', sup_diff_y, sup_diff_y)).mean()
         self.losses.append(sup_loss_y)
         # # 5. 1 if nearest neighbour of g(y) is not the known x mapping,
         # #    0 otherwise
-        gy_mismatch = torch_mapping_misclassified_1nn(
-            y_mapped, self.x_emb.weight, y_intersect, self.device
-        )
-        self.losses.append(gy_mismatch)
+        #gy_mismatch = torch_mapping_misclassified_1nn(
+        #    y_mapped, self.x_emb.weight, y_intersect, self.device
+        #)
+        #self.losses.append(gy_mismatch)
+
+        gy_x_spearman = mapped_spearman_loss(y_mapped[y_intersect], self.x_emb.weight[x_intersect])
+        self.losses.append(gy_x_spearman)
+
         print(f"losses: {self.losses}")
         # Losses must be summed like below, or learning doesn't happen
         # cannot convert to a tensor containing self.losses,
