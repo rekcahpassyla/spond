@@ -85,10 +85,9 @@ class AlignedGloveLayer(nn.Module):
         cls = ProbabilisticGloveLayer if probabilistic else GloveLayer
         self.x_emb = cls(x_nconcepts, x_embedding_dim, x_cooc, **kws)
         self.y_emb = cls(y_nconcepts, y_embedding_dim, y_cooc, **kws)
-        # dictionary of x to y
-        self.index_map = dict(index_map)
+        self.index_map = index_map
         # This is stored just for speed
-        self.rev_index_map = {v: k for k, v in self.index_map.items()}
+        #self.rev_index_map = {v: k for k, v in self.index_map.items()}
 
         # build the MLPs that are the aligner layers
         # f(x) --> y
@@ -125,14 +124,6 @@ class AlignedGloveLayer(nn.Module):
         self.losses = []
         self.losses += self.x_emb.loss(x_inds)
         self.losses += self.y_emb.loss(y_inds)
-        # For concepts that exist in both domains:
-        # First we have to find the concepts in this index
-        # that exist in both domains, by comparing with self.index_map
-        # and self.rev_index_map
-        # This code relies heavily on the fact that the index_map and
-        # rev_index_map are small, and therefore using numpy operations
-        # is fast.
-        x_present = list(set(self.index_map.keys()).intersection(set(x_inds.tolist())))
         x_mapped = self.fx(self.x_emb.weight)
         y_mapped = self.gy(self.y_emb.weight)
         # calculate cycle loss: g(f(x)) - x
@@ -149,40 +140,32 @@ class AlignedGloveLayer(nn.Module):
         gy_diff = y_rt - self.y_emb.weight
         cycle_gy_loss = torch.sqrt(torch.einsum('ij,ij->i', gy_diff, gy_diff)).mean() #sum()
         self.losses.append(cycle_gy_loss)
+        # For concepts that exist in both domains:
+        # The intersection will always be trained for mismatch / supervised loss.
+        # and self.rev_index_map
+        # This code relies heavily on the fact that the index_map is small,
+        # therefore using numpy operations is fast.
+        x_intersect = self.index_map[:, 0]
+        y_intersect = self.index_map[:, 1]
+        sup_diff_x = x_mapped[x_intersect] - self.y_emb.weight[y_intersect]
+        sup_loss_x = torch.sqrt(torch.einsum('ij,ij->i', sup_diff_x, sup_diff_x)).mean()
 
-        # only do stuff if there are any shared items present in the x domain
-        if len(x_present):
-            # we also need the y values that x_present mapped to
-            y_check = [self.index_map[k] for k in x_present]
-            # 2. distance between fx and y_embedding
-            # this is called the "supervised loss"
-            sup_diff_x = x_mapped[x_present] - self.y_emb.weight[y_check]
-            # change to sq euclidean distance (remove sqrt)
-            sup_loss_x = torch.sqrt(torch.einsum('ij,ij->i', sup_diff_x, sup_diff_x)).mean()
-            self.losses.append(sup_loss_x)
-            # # 4. 1 if nearest neighbour of f(x) is not the known y mapping,
-            # #    0 otherwise
-            fx_mismatch = torch_mapping_misclassified_1nn(
-                x_mapped, self.y_emb.weight, x_present, self.device
-            )
-            #print(f"f(x) mismatch: {fx_mismatch}")
-            self.losses.append(fx_mismatch)
-
-        y_present = list(set(self.rev_index_map.keys()).intersection(
-            set(y_inds.tolist())))
-        if len(y_present):
-            x_check = [self.rev_index_map[k] for k in y_present]
-            # 3. distance between gy and x_embedding
-            sup_diff_y = y_mapped[y_present] - self.x_emb.weight[x_check]
-            sup_loss_y = torch.sqrt(torch.einsum('ij,ij->i', sup_diff_y, sup_diff_y)).mean()
-            self.losses.append(sup_loss_y)
-            # # 5. 1 if nearest neighbour of g(y) is not the known x mapping,
-            # #    0 otherwise
-            gy_mismatch = torch_mapping_misclassified_1nn(
-                y_mapped, self.x_emb.weight, y_present, self.device
-            )
-            #print(f"g(y) mismatch: {gy_mismatch}")
-            self.losses.append(gy_mismatch)
+        self.losses.append(sup_loss_x)
+        # # 4. 1 if nearest neighbour of f(x) is not the known y mapping,
+        # #    0 otherwise
+        fx_mismatch = torch_mapping_misclassified_1nn(
+            x_mapped, self.y_emb.weight, x_intersect, self.device
+        )
+        self.losses.append(fx_mismatch)
+        sup_diff_y = y_mapped[y_intersect] - self.x_emb.weight[x_intersect]
+        sup_loss_y = torch.sqrt(torch.einsum('ij,ij->i', sup_diff_y, sup_diff_y)).mean()
+        self.losses.append(sup_loss_y)
+        # # 5. 1 if nearest neighbour of g(y) is not the known x mapping,
+        # #    0 otherwise
+        gy_mismatch = torch_mapping_misclassified_1nn(
+            y_mapped, self.x_emb.weight, y_intersect, self.device
+        )
+        self.losses.append(gy_mismatch)
         print(f"losses: {self.losses}")
         # Losses must be summed like below, or learning doesn't happen
         # cannot convert to a tensor containing self.losses,
@@ -288,10 +271,8 @@ class AlignedGlove(pl.LightningModule):
         # to the lower-level layers
         if self.aligner.device is None:
             self.aligner._set_device(self.device)
-        # batch_idx is the batch number in this epoch,
-        # runs from 0 to datasize/batchsize
-        if batch_idx == 0:
-            self.aligner._init_samples()
+        # init samples every batch and not just on batch_idx = 0
+        self.aligner._init_samples()
 
         # indices: the indices of the items present in this batch
         #          essentially meaningless because x_ind and y_ind are
@@ -372,7 +353,7 @@ class GloveDualDataset(Dataset):
         inds = self.inds[idx]
         out = self.out[idx]
         return inds, out
-    
+
 
 class DataDictionary:
     # This class takes the co-occurrence matrices and labels files
