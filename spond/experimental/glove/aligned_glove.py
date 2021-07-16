@@ -27,7 +27,10 @@ from spond.experimental.openimages.readfile import readlabels
 # hidden layer size, somewhat arbitrarily choose 100
 HIDDEN = 100
 
+
 # build and install from https://github.com/teddykoker/torchsort
+# Must have cuda 11.2 toolkit installed- not just the cuda 11.2 driver
+# otherwise the nvcc used will be wrong and will crash when on GPU
 import torchsort
 
 
@@ -41,17 +44,28 @@ def spearmanr(pred, target, **kw):
     return (pred * target).sum()
 
 
-def mapped_spearman_loss(pred, target):
+def mapped_spearman_loss(pred, target, device='cpu'):
+    dist = torch.cdist(pred, target, compute_mode="donot_use_mm_for_euclid_dist").to(device)
+    values, nn_inds = dist.topk(1, dim=1, largest=False)
+    v = values.squeeze(dim=1)
+    ranks = (v * nn_inds.squeeze(dim=1)) / v
+    target_ranks = torch.arange(nn_inds.size()[0])
     # we want a value that is low when spearman is high
-    loss = 1 - torch.abs(spearmanr(pred, target))
+    spr = spearmanr(ranks.unsqueeze(dim=0), target_ranks.unsqueeze(dim=0))
+    # will be 0 if spr is 1, positive number otherwise
+    loss = np.e - torch.exp(spr)
     return loss
 
 
-def torch_mapping_misclassified_1nn(mapped, target, indexes, device='cpu'): #f_x, y):
+def torch_mapping_misclassified_1nn(mapped, target, indexes,
+                                    device='cpu'): #f_x, y):
     # mapped: mapped original embeddings, approximations of the target
     # target: actual target embedding
-    # indexes: indexes describing
-    #          which embeddings should be checked for correspondence
+    # indexes: indexes describing which embeddings should be checked for correspondence.
+    #          Must be a sequence of pairs.
+    #          If indexes is [[2, 1], [3, 5], [6, 77]]
+    #          that means that mapped[2] should have the nearest neighbour target[1]
+    #          mapped[3] should have nearest neighbour target[5], and so on. 
     #          meaning if indexes 2, 3, 6 are passed, we should check
     #          if the nearest neighbours of mapped[2, 3, 6] are
     #          target[2, 3, 6].
@@ -61,14 +75,18 @@ def torch_mapping_misclassified_1nn(mapped, target, indexes, device='cpu'): #f_x
     # because we want to pass this to the optimiser for minimisation.
     # again, weird compute mode is needed because without it,
     # distance from an item to itself is not 0.
-    dist = torch.cdist(mapped[indexes], target, compute_mode="donot_use_mm_for_euclid_dist").to(device)
+    src_indexes = indexes[:, 0]
+    target_indexes = indexes[:, 1]
+    dist = torch.cdist(mapped[src_indexes], target, compute_mode="donot_use_mm_for_euclid_dist").to(device)
     values, nn_inds = dist.topk(1, dim=1, largest=False)
     # we need to do something sneaky to count the mismatches.
     # If we just sum the mismatches, there is no backpropagation.
     # Therefore, we have to do something to force the f_x and y to be
     # involved in the calculation
     nn_inds = nn_inds.squeeze(dim=1)
-    mismatches = nn_inds != torch.tensor(indexes).to(device)
+    #import pdb
+    #pdb.set_trace()
+    mismatches = nn_inds != torch.tensor(target_indexes).to(device)
     included = values.squeeze(dim=1)[mismatches]
     # trying a lot of things to basically end up with the number of items
     # that are mismatched.
@@ -173,10 +191,10 @@ class AlignedGloveLayer(nn.Module):
         self.losses.append(sup_loss_x)
         # # 4. 1 if nearest neighbour of f(x) is not the known y mapping,
         # #    0 otherwise
-        #fx_mismatch = torch_mapping_misclassified_1nn(
-        #    x_mapped, self.y_emb.weight, x_intersect, self.device
-        #)
-        #self.losses.append(fx_mismatch)
+        fx_mismatch = torch_mapping_misclassified_1nn(
+            x_mapped, self.y_emb.weight, self.index_map, self.device
+        )
+        self.losses.append(fx_mismatch)
         fx_y_spearman = mapped_spearman_loss(x_mapped[x_intersect], self.y_emb.weight[y_intersect])
         self.losses.append(fx_y_spearman)
 
@@ -185,10 +203,10 @@ class AlignedGloveLayer(nn.Module):
         self.losses.append(sup_loss_y)
         # # 5. 1 if nearest neighbour of g(y) is not the known x mapping,
         # #    0 otherwise
-        #gy_mismatch = torch_mapping_misclassified_1nn(
-        #    y_mapped, self.x_emb.weight, y_intersect, self.device
-        #)
-        #self.losses.append(gy_mismatch)
+        gy_mismatch = torch_mapping_misclassified_1nn(
+            y_mapped, self.x_emb.weight, self.index_map.T[::-1].T, self.device
+        )
+        self.losses.append(gy_mismatch)
 
         gy_x_spearman = mapped_spearman_loss(y_mapped[y_intersect], self.x_emb.weight[x_intersect])
         self.losses.append(gy_x_spearman)
@@ -323,6 +341,28 @@ class AlignedGlove(pl.LightningModule):
         dataset = GloveDualDataset(self.data)
         return DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
 
+    def evaluate(self, device='cpu'):
+        # test how good the alignment is.
+        al = self.aligner
+        x_intersect = al.index_map[:, 0]
+        y_intersect = al.index_map[:, 1]
+        x_emb = al.x_emb.weight.to(device)
+        y_emb = al.y_emb.weight.to(device)
+        fx = al.fx.to(device)(x_emb)
+        # We want fx[x_intersect] to be close to y_emb.weight[y_intersect]
+        fx_dist = torch.cdist(fx[x_intersect], y_emb[y_intersect],
+                           compute_mode="donot_use_mm_for_euclid_dist").to(device)
+        values, nn_inds = fx_dist.topk(1, dim=1, largest=False)
+        fx_acc = (y_intersect[nn_inds.squeeze()] == y_intersect)
+
+        # and we want gy[y_intersect] to be close to x_emb.weight[x_intersect]
+        gy = al.gy.to(device)(y_emb)
+        gy_dist = torch.cdist(gy[y_intersect], x_emb[x_intersect],
+                           compute_mode="donot_use_mm_for_euclid_dist").to(device)
+        values, nn_inds = gy_dist.topk(1, dim=1, largest=False)
+        gy_acc = (x_intersect[nn_inds.squeeze()] == x_intersect)
+
+        return [fx_acc.mean(), gy_acc.mean()]
 
 class GloveDualDataset(Dataset):
 
@@ -509,7 +549,7 @@ if __name__ == '__main__':
     # It may be due to some internal array being larger than 65535 when cdist is used.
     # https://github.com/pytorch/pytorch/issues/49928
     # https://discuss.pytorch.org/t/cuda-invalid-configuration-error-on-gpu-only/50399/15
-    batch_size = 1000
+    batch_size = 500   # needs to be 500 for probabilistic, otherwise 1000 OOM
     y_cooc_file = os.path.join(datapath, 'audioset', "co_occurrence_audio_all.pt")
     y_labels_file = os.path.join(datapath, 'audioset', "class_labels.csv")
     y_dim = 6
@@ -539,7 +579,7 @@ if __name__ == '__main__':
                          x_embedding_dim=x_dim,  # dimension of x
                          y_embedding_dim=y_dim,  # dimension of y
                          seed=seed,
-                         probabilistic=False)
+                         probabilistic=True)
     trainer.fit(model)
     #model.save('aligned.pt')
     #model_rt = AlignedGlove.load('aligned.pt')
